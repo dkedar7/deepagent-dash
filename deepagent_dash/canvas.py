@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Dict, List
 from datetime import datetime
 
-
 def parse_canvas_object(obj: Any, workspace_root: Path) -> Dict[str, Any]:
     """Parse Python objects into canvas-renderable format.
 
@@ -262,42 +261,3 @@ def load_canvas_from_markdown(workspace_root: Path, markdown_path: str = None) -
             })
 
     return canvas_items
-
-
-def add_to_canvas(content: Any, workspace_root: Path) -> Dict[str, Any]:
-    """Add an item to the canvas for visualization.
-
-    Args:
-        content: Can be a pandas DataFrame, matplotlib Figure, plotly Figure,
-                PIL Image, dictionary (for Plotly JSON), or string (for Markdown)
-        workspace_root: Path to the workspace root directory
-
-    Returns:
-        Dictionary with the parsed canvas object
-
-    Examples:
-        # Add a DataFrame
-        import pandas as pd
-        df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
-        add_to_canvas(df, workspace_root)
-
-        # Add a Matplotlib chart
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
-        ax.plot([1, 2, 3], [1, 4, 9])
-        add_to_canvas(fig, workspace_root)
-
-        # Add Markdown text
-        add_to_canvas("## Key Findings\\n- Point 1\\n- Point 2", workspace_root)
-    """
-    try:
-        # Parse the content into canvas format
-        parsed = parse_canvas_object(content, workspace_root)
-        # Return the parsed object (deepagents will handle the JSON serialization)
-        return parsed
-    except Exception as e:
-        return {
-            "type": "error",
-            "data": f"Failed to add to canvas: {str(e)}",
-            "error": str(e)
-        }
