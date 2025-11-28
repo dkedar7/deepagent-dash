@@ -62,10 +62,6 @@ deepagent-dash = "deepagent_dash.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["deepagent_dash"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"deepagent_dash/assets" = "deepagent_dash/assets"
-"deepagent_dash/templates" = "deepagent_dash/templates"
-
 [tool.black]
 line-length = 100
 target-version = ['py311', 'py312', 'py313', 'py314']
