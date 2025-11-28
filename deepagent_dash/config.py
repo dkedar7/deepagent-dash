@@ -5,12 +5,12 @@ Configuration file for DeepAgent Dash.
 from pathlib import Path
 
 # Set your workspace root directory
-# Default: current directory
+# Default: workspace subdirectory in current directory
 # Examples:
 #   WORKSPACE_ROOT = Path("/Users/yourname/projects")
 #   WORKSPACE_ROOT = Path("~/Documents/workspace").expanduser()
 #   WORKSPACE_ROOT = Path("./my_workspace")
-WORKSPACE_ROOT = Path("./").resolve()
+WORKSPACE_ROOT = Path("./workspace").resolve()
 
 # Ensure workspace exists
 WORKSPACE_ROOT.mkdir(exist_ok=True, parents=True)

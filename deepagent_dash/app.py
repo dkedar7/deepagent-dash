@@ -188,7 +188,14 @@ def create_app(workspace: Path, agent, title: str = "DeepAgent Dash"):
                                 style={"padding": "10px"}
                             )
                         ], gap="md")
-                    ], p="md", shadow="sm", withBorder=True)
+                    ], p="md", shadow="sm", withBorder=True),
+
+                    # Canvas/file browser refresh interval
+                    dcc.Interval(
+                        id="canvas-refresh-interval",
+                        interval=2000,  # 2 seconds
+                        disabled=False
+                    )
                 ], span=6)
             ], gutter="md")
         ], fluid=True, size="xl"),
@@ -353,6 +360,11 @@ def create_app(workspace: Path, agent, title: str = "DeepAgent Dash"):
                                 if todos:
                                     new_todos = todos
 
+                            # Handle add_to_canvas - skip displaying in chat
+                            elif message_type == 'ToolMessage' and hasattr(last_message, 'name') and last_message.name == 'add_to_canvas':
+                                # Silently skip - canvas updates are shown in the canvas pane
+                                pass
+
                             # Handle regular messages
                             elif hasattr(last_message, 'content'):
                                 content = last_message.content
@@ -409,10 +421,11 @@ def create_app(workspace: Path, agent, title: str = "DeepAgent Dash"):
     @app.callback(
         Output("right-pane-content", "children"),
         Input("view-switch", "checked"),
+        Input("canvas-refresh-interval", "n_intervals"),
         State("workspace-path", "data"),
         prevent_initial_call=False
     )
-    def update_right_pane(show_canvas, workspace_path):
+    def update_right_pane(show_canvas, n_intervals, workspace_path):
         """Toggle between file browser and canvas view."""
         try:
             if show_canvas:

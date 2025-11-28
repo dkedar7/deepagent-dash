@@ -121,8 +121,8 @@ deepagent-dash run --help
 
 ## Documentation
 
-- [DeepAgent Dash Documentation](https://github.com/yourusername/deepagent-dash)
-- [CLI Usage Guide](https://github.com/yourusername/deepagent-dash/blob/main/docs/CLI_USAGE.md)
+- [DeepAgent Dash Documentation](https://github.com/dkedar7/deepagent-dash)
+- [CLI Usage Guide](https://github.com/dkedar7/deepagent-dash/blob/main/docs/CLI_USAGE.md)
 """
     (project_dir / "README.md").write_text(readme)
 
