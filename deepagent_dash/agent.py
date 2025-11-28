@@ -1,5 +1,6 @@
-import os
+import uuid
 from deepagents import create_deep_agent
+from langgraph.checkpoint.memory import InMemorySaver
 from deepagents.backends import FilesystemBackend
 
 from deepagent_dash.tools import add_to_canvas
@@ -21,4 +22,5 @@ agent = create_deep_agent(
     system_prompt=SYSTEM_PROMPT,
     backend=backend,
     tools=[add_to_canvas],
+    checkpointer=InMemorySaver()
 )
