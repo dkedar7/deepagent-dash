@@ -21,15 +21,15 @@ from dash.exceptions import PreventUpdate
 import dash_mantine_components as dmc
 
 # Import custom modules
-from canvas import parse_canvas_object, export_canvas_to_markdown, load_canvas_from_markdown
-from file_utils import build_file_tree, render_file_tree, read_file_content, get_file_download_data
-from components import (
+from .canvas import parse_canvas_object, export_canvas_to_markdown, load_canvas_from_markdown
+from .file_utils import build_file_tree, render_file_tree, read_file_content, get_file_download_data
+from .components import (
     format_message, format_loading, format_thinking, format_todos,
     format_todos_inline, render_canvas_items
 )
 
 # Import configuration defaults
-import config
+from . import config
 
 # Generate thread ID
 thread_id = str(uuid.uuid4())
@@ -156,34 +156,49 @@ def load_agent_from_spec(agent_spec: str):
     except Exception as e:
         return None, f"Failed to load agent from {agent_spec}: {e}"
 
-# Parse CLI arguments
-args = parse_args()
+# Only parse CLI arguments if running as main module
+if __name__ == "__main__":
+    args = parse_args()
 
-# Apply configuration with CLI overrides
-WORKSPACE_ROOT = Path(args.workspace).resolve() if args.workspace else config.WORKSPACE_ROOT
-APP_TITLE = args.title if args.title else config.APP_TITLE
-APP_SUBTITLE = args.subtitle if args.subtitle else config.APP_SUBTITLE
-PORT = args.port if args.port else config.PORT
-HOST = args.host if args.host else config.HOST
+    # Apply configuration with CLI overrides
+    WORKSPACE_ROOT = Path(args.workspace).resolve() if args.workspace else config.WORKSPACE_ROOT
+    APP_TITLE = args.title if args.title else config.APP_TITLE
+    APP_SUBTITLE = args.subtitle if args.subtitle else config.APP_SUBTITLE
+    PORT = args.port if args.port else config.PORT
+    HOST = args.host if args.host else config.HOST
 
-# Handle debug flag
-if args.debug:
-    DEBUG = True
-elif args.no_debug:
-    DEBUG = False
+    # Handle debug flag
+    if args.debug:
+        DEBUG = True
+    elif args.no_debug:
+        DEBUG = False
+    else:
+        DEBUG = config.DEBUG
+
+    # Ensure workspace exists
+    WORKSPACE_ROOT.mkdir(exist_ok=True, parents=True)
+
+    # Initialize agent with override support
+    if args.agent:
+        # Load agent from CLI specification
+        agent, agent_error = load_agent_from_spec(args.agent)
+        AGENT_ERROR = agent_error
+    else:
+        # Use agent from config.py
+        agent, AGENT_ERROR = load_agent_from_spec(config.AGENT_SPEC)
 else:
+    # When imported as a module, use config defaults
+    WORKSPACE_ROOT = config.WORKSPACE_ROOT
+    APP_TITLE = config.APP_TITLE
+    APP_SUBTITLE = config.APP_SUBTITLE
+    PORT = config.PORT
+    HOST = config.HOST
     DEBUG = config.DEBUG
 
-# Ensure workspace exists
-WORKSPACE_ROOT.mkdir(exist_ok=True, parents=True)
+    # Ensure workspace exists
+    WORKSPACE_ROOT.mkdir(exist_ok=True, parents=True)
 
-# Initialize agent with override support
-if args.agent:
-    # Load agent from CLI specification
-    agent, agent_error = load_agent_from_spec(args.agent)
-    AGENT_ERROR = agent_error
-else:
-    # Use agent from config.py
+    # Initialize agent from config
     agent, AGENT_ERROR = load_agent_from_spec(config.AGENT_SPEC)
 
 
