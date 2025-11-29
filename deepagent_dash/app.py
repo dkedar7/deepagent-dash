@@ -947,7 +947,13 @@ def toggle_view(files_clicks, canvas_clicks):
     else:
         # Show files, hide canvas
         return (
-            {"flex": "1", "display": "flex", "flexDirection": "column"},
+            {
+                "flex": "1",
+                "minHeight": "0",  # Critical for flex overflow
+                "display": "flex",
+                "flexDirection": "column",
+                "padding-bottom": "5%"  # Bottom padding for spacing
+            },
             {
                 "flex": "1",
                 "minHeight": "0",  # Critical for flex overflow
