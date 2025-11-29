@@ -37,6 +37,7 @@ Let's get started!"""
         dcc.Store(id="pending-message", data=None),
         dcc.Store(id="expanded-folders", data=[]),
         dcc.Store(id="file-to-view", data=None),
+        dcc.Store(id="file-click-tracker", data={}),
         dcc.Download(id="file-download"),
 
         # Interval for polling agent updates (disabled by default)

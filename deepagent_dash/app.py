@@ -628,11 +628,99 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
     [Output("file-modal", "opened"),
      Output("file-modal", "title"),
      Output("modal-content", "children"),
-     Output("file-to-view", "data")],
+     Output("file-to-view", "data"),
+     Output("file-click-tracker", "data")],
     Input({"type": "file-item", "path": ALL}, "n_clicks"),
+    [State({"type": "file-item", "path": ALL}, "id"),
+     State("file-click-tracker", "data")],
     prevent_initial_call=True
 )
-def open_file_modal(n_clicks):
+def open_file_modal(all_n_clicks, all_ids, click_tracker):
+    """Open file in modal - only on actual new clicks."""
+    ctx = callback_context
+    
+    if not ctx.triggered_id:
+        raise PreventUpdate
+    
+    # ctx.triggered_id is the dict {"type": "file-item", "path": "..."}
+    if not isinstance(ctx.triggered_id, dict):
+        raise PreventUpdate
+        
+    if ctx.triggered_id.get("type") != "file-item":
+        raise PreventUpdate
+    
+    file_path = ctx.triggered_id.get("path")
+    if not file_path:
+        raise PreventUpdate
+    
+    # Find the index of the triggered item to get its click count
+    clicked_idx = None
+    for i, item_id in enumerate(all_ids):
+        if item_id.get("path") == file_path:
+            clicked_idx = i
+            break
+    
+    if clicked_idx is None:
+        raise PreventUpdate
+    
+    # Get current click count for this file
+    current_clicks = all_n_clicks[clicked_idx] if clicked_idx < len(all_n_clicks) else None
+    
+    # Must be an actual click (not None, not 0)
+    if not current_clicks:
+        raise PreventUpdate
+    
+    # Check if this is a NEW click vs a re-render with existing clicks
+    click_tracker = click_tracker or {}
+    prev_clicks = click_tracker.get(file_path, 0)
+    
+    # Update tracker regardless of whether we open modal
+    new_tracker = click_tracker.copy()
+    new_tracker[file_path] = current_clicks
+    
+    if current_clicks <= prev_clicks:
+        # Not a new click - component was re-rendered or this click was already processed
+        # Still need to return updated tracker to avoid stale state
+        raise PreventUpdate
+    
+    # Verify file exists and is a file
+    full_path = WORKSPACE_ROOT / file_path
+    if not full_path.exists() or not full_path.is_file():
+        raise PreventUpdate
+
+    content, is_text, error = read_file_content(WORKSPACE_ROOT, file_path)
+    filename = Path(file_path).name
+
+    if is_text and content:
+        modal_content = html.Pre(
+            content,
+            style={
+                "background": COLORS["bg_tertiary"],
+                "padding": "16px",
+                "fontSize": "12px",
+                "fontFamily": "'IBM Plex Mono', monospace",
+                "overflow": "auto",
+                "maxHeight": "60vh",
+                "whiteSpace": "pre-wrap",
+                "wordBreak": "break-word",
+                "margin": "0",
+            }
+        )
+    else:
+        modal_content = html.Div([
+            html.P(error or "Cannot display file", style={
+                "color": COLORS["text_muted"],
+                "textAlign": "center",
+                "padding": "40px",
+            }),
+            html.P("Click Download to save the file.", style={
+                "color": COLORS["text_muted"],
+                "textAlign": "center",
+                "fontSize": "13px",
+            })
+        ])
+
+    return True, filename, modal_content, file_path, new_tracker
     """Open file in modal."""
     ctx = callback_context
     
