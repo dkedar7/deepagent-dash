@@ -50,11 +50,8 @@ def get_config(key: str, default=None, type_cast=None):
 # Environment variable: DEEPAGENT_WORKSPACE_ROOT
 # CLI argument: --workspace
 # Default: current directory
-WORKSPACE_ROOT = get_config(
-    "workspace_root",
-    default="./",
-    type_cast=lambda x: Path(x).resolve()
-)
+_workspace_path = get_config("workspace_root", default="./")
+WORKSPACE_ROOT = Path(_workspace_path).resolve() if _workspace_path else Path("./").resolve()
 
 # Agent specification (format: "module_path:variable_name")
 # Environment variable: DEEPAGENT_AGENT_SPEC
