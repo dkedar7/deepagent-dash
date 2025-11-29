@@ -65,6 +65,40 @@ deepagent-dash run --agent my_agent.py:agent --debug
 
 ## Usage
 
+### Configuration Priority
+
+DeepAgent Dash supports three ways to configure the application, with the following priority (highest to lowest):
+
+1. **CLI Arguments** - Override everything
+2. **Environment Variables** - Override config file defaults
+3. **Config File** - Base defaults
+
+### Environment Variables
+
+All configuration can be controlled via environment variables:
+
+```bash
+# Workspace directory
+export DEEPAGENT_WORKSPACE_ROOT=/path/to/workspace
+
+# Agent specification
+export DEEPAGENT_AGENT_SPEC=my_agent.py:agent
+
+# UI configuration
+export DEEPAGENT_APP_TITLE="My Custom App"
+export DEEPAGENT_APP_SUBTITLE="Custom Subtitle"
+
+# Server configuration
+export DEEPAGENT_PORT=9000
+export DEEPAGENT_HOST=0.0.0.0
+export DEEPAGENT_DEBUG=true
+
+# Run the app (uses env vars)
+deepagent-dash run
+```
+
+This is especially useful for Docker/Kubernetes deployments.
+
 ### Command-Line Interface
 
 ```bash
@@ -182,15 +216,43 @@ my-project/
 
 ## Agent Integration
 
+### Accessing the Workspace
+
+DeepAgent Dash automatically sets the `DEEPAGENT_WORKSPACE_ROOT` environment variable, which your agent can read:
+
+```python
+import os
+from pathlib import Path
+
+# In your agent code
+workspace = Path(os.getenv('DEEPAGENT_WORKSPACE_ROOT', './'))
+print(f"Agent workspace: {workspace}")
+
+# Now your agent can read/write files in the workspace
+config_file = workspace / "config.json"
+if config_file.exists():
+    # ... process config
+```
+
+This environment variable is automatically set based on:
+1. CLI argument: `--workspace /path`
+2. Environment variable: `DEEPAGENT_WORKSPACE_ROOT`
+3. Config file: `WORKSPACE_ROOT`
+
 ### Using DeepAgents
 
 ```python
 # In your config.py
 def get_agent():
+    import os
+    from pathlib import Path
     from deepagents import create_deep_agent
     from deepagents.backends import FilesystemBackend
 
-    backend = FilesystemBackend(root_dir=str(WORKSPACE_ROOT), virtual_mode=True)
+    # Read workspace from environment (set by DeepAgent Dash)
+    workspace = Path(os.getenv('DEEPAGENT_WORKSPACE_ROOT', './'))
+
+    backend = FilesystemBackend(root_dir=str(workspace), virtual_mode=True)
     agent = create_deep_agent(
         model="anthropic:claude-sonnet-4-20250514",
         system_prompt="Your prompt here",
@@ -204,15 +266,23 @@ def get_agent():
 ```python
 # In your config.py
 def get_agent():
+    import os
+    from pathlib import Path
     from my_agent_library import MyAgent
 
-    agent = MyAgent(workspace=str(WORKSPACE_ROOT))
+    # Read workspace from environment (set by DeepAgent Dash)
+    workspace = Path(os.getenv('DEEPAGENT_WORKSPACE_ROOT', './'))
+
+    agent = MyAgent(workspace=workspace)
     return agent, None
 ```
+
+### Agent Requirements
 
 Your agent must support:
 - Streaming: `agent.stream(input, stream_mode="updates")`
 - Message format: `{"messages": [{"role": "user", "content": "..."}]}`
+- Workspace access: Read `DEEPAGENT_WORKSPACE_ROOT` environment variable
 
 ### Agent Specification Format
 

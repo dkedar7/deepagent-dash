@@ -1,3 +1,4 @@
+import os
 import uuid
 import sys
 import json
@@ -1165,6 +1166,10 @@ def run_app(
 
     # Ensure workspace exists
     WORKSPACE_ROOT.mkdir(exist_ok=True, parents=True)
+
+    # Set environment variable for agent to access workspace
+    # This allows user agents to read DEEPAGENT_WORKSPACE_ROOT
+    os.environ['DEEPAGENT_WORKSPACE_ROOT'] = str(WORKSPACE_ROOT)
 
     # Update global state to use the configured workspace
     global _agent_state
