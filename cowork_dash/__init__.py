@@ -1,5 +1,5 @@
 """
-DeepAgent Dash - AI Agent Web Interface
+Cowork Dash - AI Agent Web Interface
 
 A modular Dash application providing a web interface for AI agent interactions
 with filesystem workspace, canvas visualization, and real-time streaming.
@@ -14,10 +14,10 @@ Features:
 
 Usage:
     # Command-line
-    $ deepagent-dash run --workspace ~/my-workspace
+    $ cowork-dash run --workspace ~/my-workspace
 
     # Python API
-    from deepagent_dash import run_app
+    from cowork_dash import run_app
 
     # With agent instance
     from my_agent import MyAgent

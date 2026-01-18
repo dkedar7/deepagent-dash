@@ -3,7 +3,7 @@ from deepagents import create_deep_agent
 from langgraph.checkpoint.memory import InMemorySaver
 from deepagents.backends import FilesystemBackend
 
-from deepagent_dash.tools import add_to_canvas
+from cowork_dash.tools import add_to_canvas
 
 SYSTEM_PROMPT = """You are a helpful AI assistant with access to a filesystem workspace.
 You can browse, read, create, and modify files to help users with their tasks.

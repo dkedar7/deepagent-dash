@@ -1,5 +1,5 @@
 """
-Core functionality tests for DeepAgent Dash.
+Core functionality tests for Cowork Dash.
 
 Tests the main entry points:
 - CLI argument parsing (5 tests)
@@ -12,8 +12,8 @@ Total: 15 tests
 import os
 from unittest.mock import patch
 
-from deepagent_dash.app import run_app, load_agent_from_spec
-from deepagent_dash.cli import main
+from cowork_dash.app import run_app, load_agent_from_spec
+from cowork_dash.cli import main
 
 
 # =============================================================================
@@ -26,50 +26,50 @@ def test_cli_workspace_argument(monkeypatch, tmp_path):
     workspace = tmp_path / "test_ws"
     workspace.mkdir()
 
-    test_args = ["deepagent-dash", "run", "--workspace", str(workspace)]
+    test_args = ["cowork-dash", "run", "--workspace", str(workspace)]
     monkeypatch.setattr("sys.argv", test_args)
 
-    with patch("deepagent_dash.app.run_app") as mock_run:
+    with patch("cowork_dash.app.run_app") as mock_run:
         main()
         assert mock_run.call_args[1]["workspace"] == str(workspace)
 
 
 def test_cli_port_argument(monkeypatch):
     """Test CLI --port argument is parsed as integer."""
-    test_args = ["deepagent-dash", "run", "--port", "9999"]
+    test_args = ["cowork-dash", "run", "--port", "9999"]
     monkeypatch.setattr("sys.argv", test_args)
 
-    with patch("deepagent_dash.app.run_app") as mock_run:
+    with patch("cowork_dash.app.run_app") as mock_run:
         main()
         assert mock_run.call_args[1]["port"] == 9999
 
 
 def test_cli_agent_argument(monkeypatch):
     """Test CLI --agent argument is passed through."""
-    test_args = ["deepagent-dash", "run", "--agent", "my_agent.py:agent"]
+    test_args = ["cowork-dash", "run", "--agent", "my_agent.py:agent"]
     monkeypatch.setattr("sys.argv", test_args)
 
-    with patch("deepagent_dash.app.run_app") as mock_run:
+    with patch("cowork_dash.app.run_app") as mock_run:
         main()
         assert mock_run.call_args[1]["agent_spec"] == "my_agent.py:agent"
 
 
 def test_cli_debug_flag(monkeypatch):
     """Test CLI --debug flag sets debug=True."""
-    test_args = ["deepagent-dash", "run", "--debug"]
+    test_args = ["cowork-dash", "run", "--debug"]
     monkeypatch.setattr("sys.argv", test_args)
 
-    with patch("deepagent_dash.app.run_app") as mock_run:
+    with patch("cowork_dash.app.run_app") as mock_run:
         main()
         assert mock_run.call_args[1]["debug"] is True
 
 
 def test_cli_title_subtitle(monkeypatch):
     """Test CLI --title and --subtitle arguments."""
-    test_args = ["deepagent-dash", "run", "--title", "My App"]
+    test_args = ["cowork-dash", "run", "--title", "My App"]
     monkeypatch.setattr("sys.argv", test_args)
 
-    with patch("deepagent_dash.app.run_app") as mock_run:
+    with patch("cowork_dash.app.run_app") as mock_run:
         main()
         assert mock_run.call_args[1]["title"] == "My App"
 
@@ -84,10 +84,10 @@ def test_api_agent_instance(tmp_path, sample_agent):
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    with patch("deepagent_dash.app.app.run"):
+    with patch("cowork_dash.app.app.run"):
         run_app(sample_agent, workspace=str(workspace))
 
-        from deepagent_dash.app import agent
+        from cowork_dash.app import agent
         assert agent is sample_agent
 
 
@@ -100,14 +100,14 @@ def test_api_agent_spec_priority(tmp_path, sample_agent):
     agent_file = tmp_path / "test_agent.py"
     agent_file.write_text("class Agent:\n    pass\nmy_agent = Agent()\n")
 
-    with patch("deepagent_dash.app.app.run"):
+    with patch("cowork_dash.app.app.run"):
         run_app(
             sample_agent,  # Should be ignored
             workspace=str(workspace),
             agent_spec=f"{agent_file}:my_agent"
         )
 
-        from deepagent_dash.app import agent
+        from cowork_dash.app import agent
         assert agent.__class__.__name__ == "Agent"
 
 
@@ -116,7 +116,7 @@ def test_api_workspace_env_var(tmp_path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    with patch("deepagent_dash.app.app.run"):
+    with patch("cowork_dash.app.app.run"):
         run_app(workspace=str(workspace))
 
         assert os.environ["DEEPAGENT_WORKSPACE_ROOT"] == str(workspace.resolve())
@@ -127,10 +127,10 @@ def test_api_port_config(tmp_path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    with patch("deepagent_dash.app.app.run"):
+    with patch("cowork_dash.app.app.run"):
         run_app(workspace=str(workspace), port=9000)
 
-        from deepagent_dash.app import PORT
+        from cowork_dash.app import PORT
         assert PORT == 9000
 
 
@@ -139,10 +139,10 @@ def test_api_host_config(tmp_path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    with patch("deepagent_dash.app.app.run"):
+    with patch("cowork_dash.app.app.run"):
         run_app(workspace=str(workspace), host="0.0.0.0")
 
-        from deepagent_dash.app import HOST
+        from cowork_dash.app import HOST
         assert HOST == "0.0.0.0"
 
 
@@ -151,10 +151,10 @@ def test_api_debug_config(tmp_path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    with patch("deepagent_dash.app.app.run"):
+    with patch("cowork_dash.app.app.run"):
         run_app(workspace=str(workspace), debug=True)
 
-        from deepagent_dash.app import DEBUG
+        from cowork_dash.app import DEBUG
         assert DEBUG is True
 
 
@@ -163,14 +163,14 @@ def test_api_title_subtitle_config(tmp_path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
 
-    with patch("deepagent_dash.app.app.run"):
+    with patch("cowork_dash.app.app.run"):
         run_app(
             workspace=str(workspace),
             title="Custom",
             subtitle="Subtitle"
         )
 
-        from deepagent_dash.app import APP_TITLE, APP_SUBTITLE
+        from cowork_dash.app import APP_TITLE, APP_SUBTITLE
         assert APP_TITLE == "Custom"
         assert APP_SUBTITLE == "Subtitle"
 

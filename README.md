@@ -1,4 +1,4 @@
-# DeepAgent Dash
+# Cowork Dash
 
 A web interface for AI agent interactions with filesystem workspace, canvas visualization, and real-time streaming.
 
@@ -15,26 +15,26 @@ A web interface for AI agent interactions with filesystem workspace, canvas visu
 
 ```bash
 # Install via pip (includes DeepAgents)
-pip install deepagent-dash
+pip install cowork-dash
 
 # Or run directly with uvx (no installation needed)
-uvx deepagent-dash run --workspace ~/my-workspace
+uvx cowork-dash run --workspace ~/my-workspace
 ```
 
 ### Run
 
 ```bash
 # Run with defaults (current directory as workspace, no agent)
-deepagent-dash run
+cowork-dash run
 
 # Run with workspace
-deepagent-dash run --workspace ~/my-workspace
+cowork-dash run --workspace ~/my-workspace
 
 # Run with custom agent (optional)
-deepagent-dash run --agent my_agent.py:agent
+cowork-dash run --agent my_agent.py:agent
 
 # Using uvx (one-off execution)
-uvx deepagent-dash run --workspace ~/my-workspace --port 8080
+uvx cowork-dash run --workspace ~/my-workspace --port 8080
 ```
 
 Open browser to `http://localhost:8050`
@@ -50,35 +50,35 @@ Open browser to `http://localhost:8050`
 ### Environment Variables (optional)
 
 ```bash
+export DEEPAGENT_SPEC=my_agent.py:agent
 export DEEPAGENT_WORKSPACE_ROOT=/path/to/workspace
-export DEEPAGENT_AGENT_SPEC=my_agent.py:agent  # optional
 export DEEPAGENT_PORT=9000                      # optional (default: 8050)
 export DEEPAGENT_HOST=0.0.0.0                   # optional (default: localhost)
 export DEEPAGENT_DEBUG=true                     # optional (default: false)
 export DEEPAGENT_APP_TITLE="My App"             # optional
 export DEEPAGENT_APP_SUBTITLE="Subtitle"        # optional
 
-deepagent-dash run
+cowork-dash run
 ```
 
 ### CLI Options (all optional)
 
 ```bash
-deepagent-dash run [OPTIONS]
+cowork-dash run [OPTIONS]
 
   --workspace PATH        Workspace directory (default: current directory)
   --agent PATH:OBJECT     Agent spec (default: none, manual mode)
   --port PORT            Server port (default: 8050)
   --host HOST            Server host (default: localhost)
   --debug                Enable debug mode
-  --title TITLE          App title (default: "DeepAgent Dash")
+  --title TITLE          App title (default: "Cowork Dash")
   --subtitle TEXT        App subtitle (default: "AI-Powered Workspace")
 ```
 
 ### Python API
 
 ```python
-from deepagent_dash import run_app
+from cowork_dash import run_app
 
 # Option 1: Pass agent instance directly (recommended)
 from my_agent import MyAgent
@@ -96,7 +96,7 @@ run_app(workspace="~/my-workspace", port=8080, debug=True)
 
 ### Workspace Access
 
-DeepAgent Dash sets `DEEPAGENT_WORKSPACE_ROOT` environment variable for your agent:
+Cowork Dash sets `DEEPAGENT_WORKSPACE_ROOT` environment variable for your agent:
 
 ```python
 import os
@@ -115,10 +115,10 @@ Load agents using `path:object` format:
 
 ```bash
 # Load from Python file
-deepagent-dash run --agent agent.py:my_agent
+cowork-dash run --agent agent.py:my_agent
 
 # Absolute path
-deepagent-dash run --agent /path/to/agent.py:agent_instance
+cowork-dash run --agent /path/to/agent.py:agent_instance
 ```
 
 ### Agent Requirements
@@ -140,7 +140,7 @@ backend = FileSystemBackend(root=os.getenv('DEEPAGENT_WORKSPACE_ROOT', './'))
 my_agent = create_deep_agent(..., backend=backend)
 ```
 
-Then run: `deepagent-dash run --agent my_agent.py:my_agent`
+Then run: `cowork-dash run --agent my_agent.py:my_agent`
 
 ## Canvas
 
@@ -158,8 +158,8 @@ Content auto-saves to `canvas.md` and can be exported or cleared.
 
 ```bash
 # Install from source
-git clone https://github.com/dkedar7/deepagent-dash.git
-cd deepagent-dash
+git clone https://github.com/dkedar7/cowork-dash.git
+cd cowork-dash
 pip install -e ".[dev]"
 
 # Run tests
@@ -180,9 +180,9 @@ python -m build
 
 ## Links
 
-- **PyPI**: https://pypi.org/project/deepagent-dash/
-- **GitHub**: https://github.com/dkedar7/deepagent-dash
-- **Issues**: https://github.com/dkedar7/deepagent-dash/issues
+- **PyPI**: https://pypi.org/project/cowork-dash/
+- **GitHub**: https://github.com/dkedar7/cowork-dash
+- **Issues**: https://github.com/dkedar7/cowork-dash/issues
 
 ## License
 

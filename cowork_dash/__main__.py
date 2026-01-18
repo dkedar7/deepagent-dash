@@ -1,5 +1,5 @@
 """
-Allow running as: python -m deepagent_dash
+Allow running as: python -m cowork_dash
 """
 
 from .cli import main

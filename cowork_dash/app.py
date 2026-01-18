@@ -1108,7 +1108,7 @@ def run_app(
 
     Examples:
         >>> # Using agent instance directly
-        >>> from deepagent_dash import run_app
+        >>> from cowork_dash import run_app
         >>> my_agent = MyAgent()
         >>> run_app(my_agent, workspace="~/my-workspace")
 

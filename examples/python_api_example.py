@@ -1,5 +1,5 @@
 """
-Example of using DeepAgent Dash Python API.
+Example of using Cowork Dash Python API.
 
 This demonstrates how to create an agent in Python and run the app
 in the same script using the direct agent instance approach.
@@ -7,7 +7,7 @@ in the same script using the direct agent instance approach.
 
 import os
 from pathlib import Path
-from deepagent_dash import run_app
+from cowork_dash import run_app
 
 
 # Example 1: Simple usage with agent instance
@@ -34,7 +34,7 @@ def example_1_simple():
 
     except ImportError:
         print("deepagents not installed. Install with: pip install deepagents")
-        print("Or reinstall deepagent-dash: pip install deepagent-dash")
+        print("Or reinstall cowork-dash: pip install cowork-dash")
 
 # Example 2: Using agent spec (alternative approach)
 def example_2_agent_spec():

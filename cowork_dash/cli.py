@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Command-line interface for DeepAgent Dash."""
+"""Command-line interface for Cowork Dash (formerly DeepAgent Dash)."""
 
 import sys
 import shutil
@@ -8,7 +8,7 @@ import argparse
 
 
 def init_project(name: str, template: str = "default"):
-    """Initialize a new DeepAgent Dash project."""
+    """Initialize a new Cowork Dash project."""
     project_dir = Path(name).resolve()
 
     if project_dir.exists():
@@ -23,8 +23,8 @@ def init_project(name: str, template: str = "default"):
     workspace_dir.mkdir()
 
     # Copy config template
-    import deepagent_dash
-    package_dir = Path(deepagent_dash.__file__).parent
+    import cowork_dash
+    package_dir = Path(cowork_dash.__file__).parent
     template_file = package_dir / "config.py"
 
     if not template_file.exists():
@@ -34,16 +34,16 @@ def init_project(name: str, template: str = "default"):
     shutil.copy(template_file, project_dir / "config.py")
 
     # Create .env template
-    env_template = """# DeepAgent Dash Environment Variables
+    env_template = """# Cowork Dash Environment Variables
 
 # API Keys
 ANTHROPIC_API_KEY=your_api_key_here
 
-# Optional: Override config.py settings
-# WORKSPACE_ROOT=./workspace
-# PORT=8050
-# HOST=localhost
-# DEBUG=False
+# Optional: Override config.py settings (uses DEEPAGENT_* prefix for compatibility)
+# DEEPAGENT_WORKSPACE_ROOT=./workspace
+# DEEPAGENT_PORT=8050
+# DEEPAGENT_HOST=localhost
+# DEEPAGENT_DEBUG=False
 """
     (project_dir / ".env.example").write_text(env_template)
 
@@ -58,7 +58,7 @@ env/
 venv/
 ENV/
 
-# DeepAgent Dash
+# Cowork Dash
 .env
 workspace/
 canvas.md
@@ -76,7 +76,7 @@ canvas.md
     # Create README
     readme = f"""# {name}
 
-A DeepAgent Dash project.
+A Cowork Dash project.
 
 ## Setup
 
@@ -90,23 +90,23 @@ A DeepAgent Dash project.
 
 3. **Run the application**:
    ```bash
-   deepagent-dash run
+   cowork-dash run
    ```
 
 ## Usage
 
 ```bash
 # Run with defaults from config.py
-deepagent-dash run
+cowork-dash run
 
 # Override settings
-deepagent-dash run --port 8080 --debug
+cowork-dash run --port 8080 --debug
 
 # Use custom agent
-deepagent-dash run --agent my_agent.py:agent
+cowork-dash run --agent my_agent.py:agent
 
 # See all options
-deepagent-dash run --help
+cowork-dash run --help
 ```
 
 ## Project Structure
@@ -121,8 +121,8 @@ deepagent-dash run --help
 
 ## Documentation
 
-- [DeepAgent Dash Documentation](https://github.com/yourusername/deepagent-dash)
-- [CLI Usage Guide](https://github.com/yourusername/deepagent-dash/blob/main/docs/CLI_USAGE.md)
+- [Cowork Dash Documentation](https://github.com/dkedar7/cowork-dash)
+- [CLI Usage Guide](https://github.com/dkedar7/cowork-dash/blob/main/docs/CLI_USAGE.md)
 """
     (project_dir / "README.md").write_text(readme)
 
@@ -140,7 +140,7 @@ deepagent-dash run --help
     print(f"  2. cp .env.example .env  # If using DeepAgents")
     print(f"  3. Edit .env and add your ANTHROPIC_API_KEY")
     print(f"  4. Edit config.py to customize your agent")
-    print(f"  5. deepagent-dash run")
+    print(f"  5. cowork-dash run")
     print()
 
     return 0
@@ -165,37 +165,37 @@ def run_app_cli(args):
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        prog="deepagent-dash",
-        description="DeepAgent Dash - AI Agent Web Interface",
+        prog="cowork-dash",
+        description="Cowork Dash - AI Agent Web Interface",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Initialize a new project
-  deepagent-dash init my-agent-project
+  cowork-dash init my-agent-project
 
   # Run with defaults from config.py
-  deepagent-dash run
+  cowork-dash run
 
   # Run with custom settings
-  deepagent-dash run --workspace ~/projects --port 8080
+  cowork-dash run --workspace ~/projects --port 8080
 
   # Run with custom agent
-  deepagent-dash run --agent my_agent.py:agent
+  cowork-dash run --agent my_agent.py:agent
 
   # Debug mode
-  deepagent-dash run --debug
+  cowork-dash run --debug
 
-For more help: https://github.com/dkedar7/deepagent-dash
+For more help: https://github.com/dkedar7/cowork-dash
         """
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
-    # deepagent-dash init
+    # cowork-dash init
     init_parser = subparsers.add_parser(
         "init",
         help="Initialize a new project",
-        description="Create a new DeepAgent Dash project with config template"
+        description="Create a new Cowork Dash project with config template"
     )
     init_parser.add_argument("name", help="Project name/directory")
     init_parser.add_argument(
@@ -204,11 +204,11 @@ For more help: https://github.com/dkedar7/deepagent-dash
         help="Template to use (default: default)"
     )
 
-    # deepagent-dash run
+    # cowork-dash run
     run_parser = subparsers.add_parser(
         "run",
         help="Run the application",
-        description="Run DeepAgent Dash with optional configuration overrides"
+        description="Run Cowork Dash with optional configuration overrides"
     )
     run_parser.add_argument(
         "--workspace",
