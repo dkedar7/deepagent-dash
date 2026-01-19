@@ -107,6 +107,44 @@ if (typeof window.mermaidObserver === 'undefined') {
     attachMermaidObserver();
 }
 
+// Auto-scroll chat messages to bottom
+(function initChatAutoScroll() {
+    let chatMessages = null;
+
+    function scrollToBottom() {
+        if (chatMessages) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    }
+
+    function setupAutoScroll() {
+        chatMessages = document.getElementById('chat-messages');
+        if (!chatMessages) {
+            setTimeout(setupAutoScroll, 500);
+            return;
+        }
+
+        // Watch for changes to chat messages
+        const observer = new MutationObserver(function(mutations) {
+            // Small delay to ensure DOM is updated
+            setTimeout(scrollToBottom, 50);
+        });
+
+        observer.observe(chatMessages, {
+            childList: true,
+            subtree: true
+        });
+
+        console.log('Chat auto-scroll initialized');
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupAutoScroll);
+    } else {
+        setupAutoScroll();
+    }
+})();
+
 // Resizable split pane - improved reliability
 (function initResizablePanes() {
     let isResizing = false;
