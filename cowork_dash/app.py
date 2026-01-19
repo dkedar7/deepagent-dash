@@ -1299,17 +1299,33 @@ def open_terminal(n_clicks):
     raise PreventUpdate
 
 
-# Refresh file tree
+# Refresh both file tree and canvas content
 @app.callback(
-    Output("file-tree", "children"),
+    [Output("file-tree", "children"),
+     Output("canvas-content", "children", allow_duplicate=True)],
     Input("refresh-btn", "n_clicks"),
     [State("theme-store", "data")],
     prevent_initial_call=True
 )
-def refresh_tree(n_clicks, theme):
-    """Refresh file tree."""
+def refresh_sidebar(n_clicks, theme):
+    """Refresh both file tree and canvas content."""
+    global _agent_state
     colors = get_colors(theme or "light")
-    return render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
+
+    # Refresh file tree
+    file_tree = render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
+
+    # Refresh canvas by reloading from .canvas/canvas.md file
+    canvas_items = load_canvas_from_markdown(WORKSPACE_ROOT)
+
+    # Update agent state with reloaded canvas
+    with _agent_state_lock:
+        _agent_state["canvas"] = canvas_items
+
+    # Render the canvas items
+    canvas_content = render_canvas_items(canvas_items, colors)
+
+    return file_tree, canvas_content
 
 
 # File upload
@@ -1350,7 +1366,7 @@ def handle_upload(contents, filenames, theme):
 @app.callback(
     [Output("files-view", "style"),
      Output("canvas-view", "style"),
-     Output("files-actions", "style")],
+     Output("open-terminal-btn", "style")],
     [Input("sidebar-view-toggle", "value")],
     prevent_initial_call=True
 )
@@ -1360,7 +1376,7 @@ def toggle_view(view_value):
         raise PreventUpdate
 
     if view_value == "canvas":
-        # Show canvas, hide files
+        # Show canvas, hide files, hide terminal button (not relevant for canvas)
         return (
             {"flex": "1", "display": "none", "flexDirection": "column"},
             {
@@ -1370,10 +1386,10 @@ def toggle_view(view_value):
                 "flexDirection": "column",
                 "overflow": "hidden"
             },
-            {"display": "none"}
+            {"display": "none"}  # Hide terminal button on canvas view
         )
     else:
-        # Show files, hide canvas
+        # Show files, hide canvas, show terminal button
         return (
             {
                 "flex": "1",
@@ -1389,7 +1405,7 @@ def toggle_view(view_value):
                 "flexDirection": "column",
                 "overflow": "hidden"
             },
-            {"display": "flex", "alignItems": "center"}
+            {}  # Show terminal button (default styles)
         )
 
 
@@ -1410,32 +1426,6 @@ def update_canvas_content(n_intervals, view_value, theme):
     # Use imported rendering function
     return render_canvas_items(canvas_items, colors)
 
-
-
-# Refresh canvas callback - reload from .canvas/canvas.md
-@app.callback(
-    Output("canvas-content", "children", allow_duplicate=True),
-    Input("refresh-canvas-btn", "n_clicks"),
-    [State("theme-store", "data")],
-    prevent_initial_call=True
-)
-def refresh_canvas(n_clicks, theme):
-    """Refresh canvas by reloading from .canvas/canvas.md file."""
-    if not n_clicks:
-        raise PreventUpdate
-
-    global _agent_state
-    colors = get_colors(theme or "light")
-
-    # Reload canvas from markdown file
-    canvas_items = load_canvas_from_markdown(WORKSPACE_ROOT)
-
-    # Update agent state with reloaded canvas
-    with _agent_state_lock:
-        _agent_state["canvas"] = canvas_items
-
-    # Render the canvas items
-    return render_canvas_items(canvas_items, colors)
 
 
 # Clear canvas callback

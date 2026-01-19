@@ -158,7 +158,7 @@ Let's get started!"""
                     }),
                 ], id="chat-panel", style={
                     "flex": "1", "display": "flex", "flexDirection": "column",
-                    "background": "var(--mantine-color-gray-0)", "minWidth": "0",
+                    "background": "var(--mantine-color-body)", "minWidth": "0",
                 }),
 
                 # Resize handle
@@ -233,10 +233,9 @@ Let's get started!"""
                             "padding": "20px",
                             "background": "var(--mantine-color-body)",
                         }),
-                        # Canvas action buttons (floating at bottom)
+                        # Canvas action button (only Clear - Refresh is in header)
                         dmc.Group([
-                            dmc.Button("Refresh", id="refresh-canvas-btn", size="sm"),
-                            dmc.Button("Clear", id="clear-canvas-btn", size="sm", color="red"),
+                            dmc.Button("Clear Canvas", id="clear-canvas-btn", size="sm", color="red", variant="light"),
                         ], id="canvas-actions", justify="center", style={
                             "padding": "12px 20px",
                             "borderTop": "1px solid var(--mantine-color-default-border)",
