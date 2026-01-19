@@ -25,7 +25,8 @@ from .canvas import parse_canvas_object, export_canvas_to_markdown, load_canvas_
 from .file_utils import build_file_tree, render_file_tree, read_file_content, get_file_download_data, load_folder_contents
 from .components import (
     format_message, format_loading, format_thinking, format_todos,
-    format_todos_inline, render_canvas_items
+    format_todos_inline, render_canvas_items, format_tool_calls_inline,
+    format_interrupt
 )
 from .layout import create_layout as create_layout_component
 
@@ -213,25 +214,82 @@ _agent_state = {
     "running": False,
     "thinking": "",
     "todos": [],
+    "tool_calls": [],  # Current turn's tool calls (reset each turn)
     "canvas": load_canvas_from_markdown(WORKSPACE_ROOT),  # Load from canvas.md if exists
     "response": "",
     "error": None,
+    "interrupt": None,  # Track interrupt requests for human-in-the-loop
     "last_update": time.time()
 }
 _agent_state_lock = threading.Lock()
 
-def _run_agent_stream(message: str):
-    """Run agent in background thread and update global state in real-time."""
+def _run_agent_stream(message: str, resume_data: Dict = None):
+    """Run agent in background thread and update global state in real-time.
+
+    Args:
+        message: User message to send to agent
+        resume_data: Optional dict with 'decisions' to resume from interrupt
+    """
     if not agent:
         with _agent_state_lock:
             _agent_state["response"] = f"⚠️ {_agent_state['error']}\n\nPlease check your setup and try again."
             _agent_state["running"] = False
         return
 
-    try:
-        agent_input = {"messages": [{"role": "user", "content": message}]}
+    # Track tool calls by their ID for updating status
+    tool_call_map = {}
 
-        for update in agent.stream(agent_input, stream_mode="updates", config=dict(configurable=dict(thread_id=thread_id))):
+    def _serialize_tool_call(tc) -> Dict:
+        """Serialize a tool call to a dictionary."""
+        if isinstance(tc, dict):
+            return {
+                "id": tc.get("id"),
+                "name": tc.get("name"),
+                "args": tc.get("args", {}),
+                "status": "running",
+                "result": None
+            }
+        else:
+            return {
+                "id": getattr(tc, 'id', None),
+                "name": getattr(tc, 'name', None),
+                "args": getattr(tc, 'args', {}),
+                "status": "running",
+                "result": None
+            }
+
+    def _update_tool_call_result(tool_call_id: str, result: Any, status: str = "success"):
+        """Update a tool call with its result."""
+        with _agent_state_lock:
+            for tc in _agent_state["tool_calls"]:
+                if tc.get("id") == tool_call_id:
+                    tc["result"] = result
+                    tc["status"] = status
+                    break
+            _agent_state["last_update"] = time.time()
+
+    try:
+        # Prepare input based on whether we're resuming or starting fresh
+        stream_config = dict(configurable=dict(thread_id=thread_id))
+
+        if message == "__RESUME__":
+            # Resume from interrupt
+            from langgraph.types import Command
+            agent_input = Command(resume=resume_data)
+        else:
+            agent_input = {"messages": [{"role": "user", "content": message}]}
+
+        for update in agent.stream(agent_input, stream_mode="updates", config=stream_config):
+            # Check for interrupt
+            if isinstance(update, dict) and "__interrupt__" in update:
+                interrupt_value = update["__interrupt__"]
+                interrupt_data = _process_interrupt(interrupt_value)
+                with _agent_state_lock:
+                    _agent_state["interrupt"] = interrupt_data
+                    _agent_state["running"] = False  # Pause until user responds
+                    _agent_state["last_update"] = time.time()
+                return  # Exit stream, wait for user to resume
+
             if isinstance(update, dict):
                 for _, state_data in update.items():
                     if isinstance(state_data, dict) and "messages" in state_data:
@@ -240,7 +298,38 @@ def _run_agent_stream(message: str):
                             last_msg = msgs[-1] if isinstance(msgs, list) else msgs
                             msg_type = last_msg.__class__.__name__ if hasattr(last_msg, '__class__') else None
 
-                            if msg_type == 'ToolMessage' and hasattr(last_msg, 'name'):
+                            # Capture AIMessage tool_calls
+                            if msg_type == 'AIMessage' and hasattr(last_msg, 'tool_calls') and last_msg.tool_calls:
+                                new_tool_calls = []
+                                for tc in last_msg.tool_calls:
+                                    serialized = _serialize_tool_call(tc)
+                                    tool_call_map[serialized["id"]] = serialized
+                                    new_tool_calls.append(serialized)
+
+                                with _agent_state_lock:
+                                    _agent_state["tool_calls"].extend(new_tool_calls)
+                                    _agent_state["last_update"] = time.time()
+
+                            elif msg_type == 'ToolMessage' and hasattr(last_msg, 'name'):
+                                # Update tool call status when we get the result
+                                tool_call_id = getattr(last_msg, 'tool_call_id', None)
+                                if tool_call_id:
+                                    # Determine status based on content
+                                    content = last_msg.content
+                                    status = "success"
+                                    if isinstance(content, str) and ("error" in content.lower() or "Error:" in content):
+                                        status = "error"
+                                    elif isinstance(content, dict) and content.get("error"):
+                                        status = "error"
+
+                                    # Truncate result for display
+                                    result_display = str(content)
+                                    if len(result_display) > 1000:
+                                        result_display = result_display[:1000] + "..."
+
+                                    _update_tool_call_result(tool_call_id, result_display, status)
+
+                                # Handle specific tool messages
                                 if last_msg.name == 'think_tool':
                                     content = last_msg.content
                                     thinking_text = ""
@@ -375,24 +464,218 @@ def _run_agent_stream(message: str):
             _agent_state["running"] = False
             _agent_state["last_update"] = time.time()
 
-def call_agent(message: str):
-    """Start agent execution in background thread."""
+
+def _process_interrupt(interrupt_value: Any) -> Dict[str, Any]:
+    """Process a LangGraph interrupt value and convert to serializable format.
+
+    Args:
+        interrupt_value: The interrupt value from LangGraph
+
+    Returns:
+        Dict with 'message' and 'action_requests' for UI display
+    """
+    interrupt_data = {
+        "message": "The agent needs your input to continue.",
+        "action_requests": [],
+        "raw": None
+    }
+
+    # Handle different interrupt formats
+    if isinstance(interrupt_value, (list, tuple)) and len(interrupt_value) > 0:
+        first_item = interrupt_value[0]
+
+        # Check if it's an Interrupt object (from deepagents interrupt_on)
+        if hasattr(first_item, 'value'):
+            # This is a LangGraph Interrupt object
+            for item in interrupt_value:
+                value = getattr(item, 'value', None)
+
+                # deepagents interrupt_on stores tool call info in a specific format:
+                # {'action_requests': [{'name': 'bash', 'args': {...}, 'description': '...'}], 'review_configs': [...]}
+                if value is not None and isinstance(value, dict):
+                    # Check for deepagents format with action_requests
+                    action_requests = value.get('action_requests', [])
+                    if action_requests:
+                        for action_req in action_requests:
+                            tool_name = action_req.get('name', 'unknown')
+                            tool_args = action_req.get('args', {})
+                            interrupt_data["action_requests"].append({
+                                "type": "tool_call",
+                                "tool": tool_name,
+                                "args": tool_args,
+                            })
+                            interrupt_data["message"] = f"The agent wants to execute: {tool_name}"
+                    else:
+                        # Fallback: direct tool call format
+                        tool_name = value.get('name', value.get('tool', 'unknown'))
+                        tool_args = value.get('args', value.get('arguments', {}))
+                        if tool_name != 'unknown':
+                            interrupt_data["action_requests"].append({
+                                "type": "tool_call",
+                                "tool": tool_name,
+                                "args": tool_args,
+                            })
+                            interrupt_data["message"] = f"The agent wants to execute: {tool_name}"
+                        else:
+                            interrupt_data["message"] = str(value)
+                elif value is not None:
+                    interrupt_data["message"] = str(value)
+
+        # Check if it's an ActionRequest or similar
+        elif hasattr(first_item, 'action'):
+            for item in interrupt_value:
+                action = getattr(item, 'action', None)
+                if action:
+                    interrupt_data["action_requests"].append({
+                        "type": getattr(action, 'type', 'unknown'),
+                        "tool": getattr(action, 'name', getattr(action, 'tool', '')),
+                        "args": getattr(action, 'args', {}),
+                    })
+        elif isinstance(first_item, dict):
+            # Check if it's a tool call dict
+            if 'name' in first_item or 'tool' in first_item:
+                for item in interrupt_value:
+                    tool_name = item.get('name', item.get('tool', 'unknown'))
+                    tool_args = item.get('args', item.get('arguments', {}))
+                    interrupt_data["action_requests"].append({
+                        "type": "tool_call",
+                        "tool": tool_name,
+                        "args": tool_args,
+                    })
+                    interrupt_data["message"] = f"The agent wants to execute: {tool_name}"
+            else:
+                interrupt_data["action_requests"] = list(interrupt_value)
+        else:
+            interrupt_data["message"] = str(first_item)
+    elif isinstance(interrupt_value, str):
+        interrupt_data["message"] = interrupt_value
+    elif isinstance(interrupt_value, dict):
+        interrupt_data["message"] = interrupt_value.get("message", str(interrupt_value))
+        interrupt_data["action_requests"] = interrupt_value.get("action_requests", [])
+
+    # Store raw value for resume
+    try:
+        interrupt_data["raw"] = interrupt_value
+    except:
+        pass
+
+    return interrupt_data
+
+def call_agent(message: str, resume_data: Dict = None):
+    """Start agent execution in background thread.
+
+    Args:
+        message: User message to send to agent
+        resume_data: Optional dict with decisions to resume from interrupt
+    """
     # Reset state but preserve canvas - do it all atomically
     with _agent_state_lock:
         existing_canvas = _agent_state.get("canvas", []).copy()
+
         _agent_state.clear()
         _agent_state.update({
             "running": True,
             "thinking": "",
             "todos": [],
+            "tool_calls": [],  # Reset tool calls for this turn
             "canvas": existing_canvas,  # Preserve existing canvas
             "response": "",
             "error": None,
+            "interrupt": None,  # Clear any previous interrupt
             "last_update": time.time()
         })
 
     # Start background thread
-    thread = threading.Thread(target=_run_agent_stream, args=(message,))
+    thread = threading.Thread(target=_run_agent_stream, args=(message, resume_data))
+    thread.daemon = True
+    thread.start()
+
+
+def resume_agent_from_interrupt(decision: str, action: str = "approve", action_requests: List[Dict] = None):
+    """Resume agent from an interrupt with the user's decision.
+
+    Args:
+        decision: User's response/decision text
+        action: One of 'approve', 'reject', 'edit'
+        action_requests: List of action requests from the interrupt (for edit mode)
+    """
+    with _agent_state_lock:
+        interrupt_data = _agent_state.get("interrupt")
+        if not interrupt_data:
+            return
+
+        # Get action requests from interrupt data if not provided
+        if action_requests is None:
+            action_requests = interrupt_data.get("action_requests", [])
+
+        # Clear interrupt and set running, but preserve tool_calls and canvas
+        existing_tool_calls = _agent_state.get("tool_calls", []).copy()
+        existing_canvas = _agent_state.get("canvas", []).copy()
+
+        _agent_state["interrupt"] = None
+        _agent_state["running"] = True
+        _agent_state["response"] = ""  # Clear any previous response
+        _agent_state["error"] = None  # Clear any previous error
+        _agent_state["tool_calls"] = existing_tool_calls  # Keep existing tool calls
+        _agent_state["canvas"] = existing_canvas  # Keep canvas
+        _agent_state["last_update"] = time.time()
+
+    # Build decisions list in the format expected by deepagents HITL middleware
+    # Format: {"decisions": [{"type": "approve"}, {"type": "reject", "message": "..."}, ...]}
+    decisions = []
+
+    if action == "approve":
+        # Approve all action requests
+        for _ in action_requests:
+            decisions.append({"type": "approve"})
+        # If no action requests, still add one approve decision
+        if not decisions:
+            decisions.append({"type": "approve"})
+    elif action == "reject":
+        # When user rejects, stop the agent immediately instead of resuming
+        # Set the response to indicate the action was rejected
+        reject_message = decision or "User rejected the action"
+
+        # Get tool info for the rejection message
+        tool_info = ""
+        if action_requests:
+            tool_names = [ar.get("tool", "unknown") for ar in action_requests]
+            tool_info = f" ({', '.join(tool_names)})"
+
+        with _agent_state_lock:
+            _agent_state["running"] = False
+            _agent_state["response"] = f"Action rejected{tool_info}: {reject_message}"
+            _agent_state["last_update"] = time.time()
+
+        return  # Don't resume the agent
+    else:  # edit - provide edited action
+        # For edit, we need to provide the edited tool call
+        # The decision text should contain the edited command/args
+        for action_req in action_requests:
+            tool_name = action_req.get("tool", "")
+
+            # If this is a bash command and user provided new command text
+            if tool_name == "bash" and decision:
+                decisions.append({
+                    "type": "edit",
+                    "edited_action": {
+                        "name": tool_name,
+                        "args": {"command": decision}
+                    }
+                })
+            else:
+                # For other tools or no input, just approve
+                decisions.append({"type": "approve"})
+
+        if not decisions:
+            decisions.append({"type": "approve"})
+
+    # Resume value in deepagents format
+    resume_value = {"decisions": decisions}
+
+    # Start background thread with resume value
+    # Pass a special marker to indicate this is a resume operation
+    thread = threading.Thread(target=_run_agent_stream, args=("__RESUME__", resume_value))
     thread.daemon = True
     thread.start()
 
@@ -452,10 +735,14 @@ def display_initial_messages(history):
     if not history:
         return []
 
-    messages = [
-        format_message(msg["role"], msg["content"], COLORS, STYLES, is_new=False)
-        for msg in history
-    ]
+    messages = []
+    for msg in history:
+        messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES, is_new=False))
+        # Render tool calls stored with this message
+        if msg.get("tool_calls"):
+            tool_calls_block = format_tool_calls_inline(msg["tool_calls"], COLORS)
+            if tool_calls_block:
+                messages.append(tool_calls_block)
     return messages
 
 # Chat callbacks
@@ -480,7 +767,17 @@ def handle_send_immediate(n_clicks, n_submit, message, history):
     history = history or []
     history.append({"role": "user", "content": message})
 
-    messages = [format_message(m["role"], m["content"], COLORS, STYLES, is_new=(i == len(history)-1)) for i, m in enumerate(history)]
+    # Render all history messages including tool calls
+    messages = []
+    for i, m in enumerate(history):
+        is_new = (i == len(history) - 1)
+        messages.append(format_message(m["role"], m["content"], COLORS, STYLES, is_new=is_new))
+        # Render tool calls stored with this message
+        if m.get("tool_calls"):
+            tool_calls_block = format_tool_calls_inline(m["tool_calls"], COLORS)
+            if tool_calls_block:
+                messages.append(tool_calls_block)
+
     messages.append(format_loading(COLORS))
 
     # Start agent in background
@@ -500,49 +797,105 @@ def handle_send_immediate(n_clicks, n_submit, message, history):
     prevent_initial_call=True
 )
 def poll_agent_updates(n_intervals, history, pending_message):
-    """Poll for agent updates and display them in real-time."""
+    """Poll for agent updates and display them in real-time.
+
+    Tool calls are stored in history and persist across turns.
+    History items can be:
+    - {"role": "user", "content": "..."} - user message
+    - {"role": "assistant", "content": "...", "tool_calls": [...]} - assistant message with tool calls
+    """
     state = get_agent_state()
     history = history or []
 
-    # Check if agent is done
-    if not state["running"]:
-        # Agent finished - add response to history
-        if state["response"]:
-            history.append({"role": "assistant", "content": state["response"]})
-        elif state["error"]:
-            history.append({"role": "assistant", "content": f"Error: {state['error']}"})
-
-        # Build final messages with inline thinking/todos between user and assistant
-        final_messages = []
-        for i, msg in enumerate(history):
-            final_messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES, is_new=(i >= len(history)-1)))
-
-            # Add thinking/todos after user message, before assistant response
-            if msg["role"] == "user" and i == len(history) - 2:  # Last user message
-                # Add thinking block
-                thinking_block = format_thinking(state["thinking"], COLORS)
-                if thinking_block:
-                    final_messages.append(thinking_block)
-
-                # Add todos block
-                todos_block = format_todos_inline(state["todos"], COLORS)
-                if todos_block:
-                    final_messages.append(todos_block)
-
-        # Disable polling
-        return final_messages, history, True
-    else:
-        # Agent still running - show loading with current thinking/todos
+    def render_history_messages(history_items):
+        """Render all history items including tool calls."""
         messages = []
-        for msg in history:
+        for msg in history_items:
             messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES))
+            # Render tool calls stored with this message
+            if msg.get("tool_calls"):
+                tool_calls_block = format_tool_calls_inline(msg["tool_calls"], COLORS)
+                if tool_calls_block:
+                    messages.append(tool_calls_block)
+        return messages
 
-        # Add current thinking/todos if available
+    # Check for interrupt (human-in-the-loop)
+    if state.get("interrupt"):
+        # Agent is paused waiting for user input
+        messages = render_history_messages(history)
+
+        # Add current turn's thinking/tool_calls/todos before interrupt
         if state["thinking"]:
             thinking_block = format_thinking(state["thinking"], COLORS)
             if thinking_block:
                 messages.append(thinking_block)
 
+        if state.get("tool_calls"):
+            tool_calls_block = format_tool_calls_inline(state["tool_calls"], COLORS)
+            if tool_calls_block:
+                messages.append(tool_calls_block)
+
+        if state["todos"]:
+            todos_block = format_todos_inline(state["todos"], COLORS)
+            if todos_block:
+                messages.append(todos_block)
+
+        # Add interrupt UI
+        interrupt_block = format_interrupt(state["interrupt"], COLORS)
+        if interrupt_block:
+            messages.append(interrupt_block)
+
+        # Disable polling - wait for user to respond to interrupt
+        return messages, no_update, True
+
+    # Check if agent is done
+    if not state["running"]:
+        # Agent finished - store tool calls with the USER message (they appear after user msg)
+        if state.get("tool_calls") and history:
+            # Find the last user message and attach tool calls to it
+            for i in range(len(history) - 1, -1, -1):
+                if history[i]["role"] == "user":
+                    history[i]["tool_calls"] = state["tool_calls"]
+                    break
+
+        # Add assistant response to history (without tool calls)
+        assistant_msg = {
+            "role": "assistant",
+            "content": state["response"] if state["response"] else f"Error: {state['error']}"
+        }
+
+        history.append(assistant_msg)
+
+        # Render all history (tool calls are now part of history)
+        final_messages = []
+        for i, msg in enumerate(history):
+            is_new = (i >= len(history) - 1)
+            final_messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES, is_new=is_new))
+            # Render tool calls stored with this message
+            if msg.get("tool_calls"):
+                tool_calls_block = format_tool_calls_inline(msg["tool_calls"], COLORS)
+                if tool_calls_block:
+                    final_messages.append(tool_calls_block)
+
+        # Disable polling
+        return final_messages, history, True
+    else:
+        # Agent still running - show loading with current thinking/tool_calls/todos
+        messages = render_history_messages(history)
+
+        # Add current thinking if available
+        if state["thinking"]:
+            thinking_block = format_thinking(state["thinking"], COLORS)
+            if thinking_block:
+                messages.append(thinking_block)
+
+        # Add current tool calls if available
+        if state.get("tool_calls"):
+            tool_calls_block = format_tool_calls_inline(state["tool_calls"], COLORS)
+            if tool_calls_block:
+                messages.append(tool_calls_block)
+
+        # Add current todos if available
         if state["todos"]:
             todos_block = format_todos_inline(state["todos"], COLORS)
             if todos_block:
@@ -553,6 +906,76 @@ def poll_agent_updates(n_intervals, history, pending_message):
 
         # Continue polling
         return messages, no_update, False
+
+
+# Interrupt handling callbacks
+@app.callback(
+    [Output("chat-messages", "children", allow_duplicate=True),
+     Output("poll-interval", "disabled", allow_duplicate=True)],
+    [Input("interrupt-approve-btn", "n_clicks"),
+     Input("interrupt-reject-btn", "n_clicks"),
+     Input("interrupt-edit-btn", "n_clicks")],
+    [State("interrupt-input", "value"),
+     State("chat-history", "data")],
+    prevent_initial_call=True
+)
+def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_value, history):
+    """Handle user response to an interrupt.
+
+    Note: Click parameters are required for Dash callback inputs but we use
+    ctx.triggered to determine which button was clicked.
+    """
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    triggered_value = ctx.triggered[0].get("value")
+
+    # Only proceed if there was an actual click (value > 0)
+    if not triggered_value or triggered_value <= 0:
+        raise PreventUpdate
+
+    history = history or []
+
+    # Determine action based on which button was clicked
+    if triggered_id == "interrupt-approve-btn":
+        if not approve_clicks or approve_clicks <= 0:
+            raise PreventUpdate
+        action = "approve"
+        decision = input_value or "approved"
+    elif triggered_id == "interrupt-reject-btn":
+        if not reject_clicks or reject_clicks <= 0:
+            raise PreventUpdate
+        action = "reject"
+        decision = input_value or "rejected"
+    elif triggered_id == "interrupt-edit-btn":
+        if not edit_clicks or edit_clicks <= 0:
+            raise PreventUpdate
+        action = "edit"
+        decision = input_value or ""
+        if not decision:
+            raise PreventUpdate  # Need input for edit action
+    else:
+        raise PreventUpdate
+
+    # Resume the agent with the user's decision
+    resume_agent_from_interrupt(decision, action)
+
+    # Show loading state while agent resumes
+    messages = []
+    for msg in history:
+        messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES))
+        # Render tool calls stored with this message
+        if msg.get("tool_calls"):
+            tool_calls_block = format_tool_calls_inline(msg["tool_calls"], COLORS)
+            if tool_calls_block:
+                messages.append(tool_calls_block)
+
+    messages.append(format_loading(COLORS))
+
+    # Re-enable polling
+    return messages, False
 
 
 # Folder toggle callback

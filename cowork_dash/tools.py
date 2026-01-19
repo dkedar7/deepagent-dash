@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional
 import sys
 import io
 import traceback
+import subprocess
 from contextlib import redirect_stdout, redirect_stderr
 
 from .config import WORKSPACE_ROOT
@@ -628,4 +629,71 @@ def add_to_canvas(content: Any) -> Dict[str, Any]:
             "type": "error",
             "data": f"Failed to add to canvas: {str(e)}",
             "error": str(e)
+        }
+
+
+# =============================================================================
+# BASH TOOL
+# =============================================================================
+
+def bash(command: str, timeout: int = 60) -> Dict[str, Any]:
+    """Execute a bash command and return the output.
+
+    Runs the command in the workspace directory. Use this for file operations,
+    git commands, installing packages, or any shell operations.
+
+    Args:
+        command: The bash command to execute
+        timeout: Maximum time in seconds to wait for the command (default: 60)
+
+    Returns:
+        Dictionary containing:
+        - stdout: Standard output from the command
+        - stderr: Standard error output
+        - return_code: Exit code (0 typically means success)
+        - status: "success" or "error"
+
+    Examples:
+        # List files
+        bash("ls -la")
+
+        # Check git status
+        bash("git status")
+
+        # Install a package
+        bash("pip install pandas")
+
+        # Run a script
+        bash("python script.py")
+    """
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            cwd=str(WORKSPACE_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "return_code": result.returncode,
+            "status": "success" if result.returncode == 0 else "error"
+        }
+
+    except subprocess.TimeoutExpired:
+        return {
+            "stdout": "",
+            "stderr": f"Command timed out after {timeout} seconds",
+            "return_code": -1,
+            "status": "error"
+        }
+    except Exception as e:
+        return {
+            "stdout": "",
+            "stderr": str(e),
+            "return_code": -1,
+            "status": "error"
         }

@@ -1,5 +1,6 @@
 """UI components for rendering messages, canvas items, and other UI elements."""
 
+import json
 from datetime import datetime
 from typing import Dict, List
 from dash import html, dcc
@@ -170,6 +171,339 @@ def format_todos_inline(todos: Dict, colors: Dict):
             "borderLeft": f"2px solid {colors['todo']}",
         })
     ], open=True, style={
+        "marginBottom": "8px",
+    })
+
+
+def format_tool_call(tool_call: Dict, colors: Dict, is_completed: bool = False):
+    """Format a single tool call as a submessage.
+
+    Args:
+        tool_call: Dict with 'name', 'args', and optionally 'result', 'status'
+        colors: Color scheme dict
+        is_completed: Whether the tool call has completed
+    """
+    tool_name = tool_call.get("name", "unknown")
+    tool_args = tool_call.get("args", {})
+    tool_result = tool_call.get("result")
+    tool_status = tool_call.get("status", "pending")
+
+    # Status indicator
+    if tool_status == "success":
+        status_icon = "✓"
+        status_color = colors.get("todo", "#34a853")
+        border_color = colors.get("todo", "#34a853")
+    elif tool_status == "error":
+        status_icon = "✗"
+        status_color = colors.get("error", "#ea4335")
+        border_color = colors.get("error", "#ea4335")
+    elif tool_status == "running":
+        status_icon = "◐"
+        status_color = colors.get("warning", "#fbbc04")
+        border_color = colors.get("warning", "#fbbc04")
+    else:  # pending
+        status_icon = "○"
+        status_color = colors.get("text_muted", "#80868b")
+        border_color = colors.get("text_muted", "#80868b")
+
+    # Format args for display (truncate if too long)
+    args_display = ""
+    if tool_args:
+        import json
+        try:
+            args_str = json.dumps(tool_args, indent=2)
+            if len(args_str) > 500:
+                args_str = args_str[:500] + "..."
+            args_display = args_str
+        except:
+            args_display = str(tool_args)[:500]
+
+    # Build the tool call display
+    tool_header = html.Div([
+        html.Span(status_icon, style={
+            "marginRight": "8px",
+            "color": status_color,
+            "fontWeight": "bold",
+        }),
+        html.Span(f"Tool: ", style={
+            "fontSize": "11px",
+            "color": colors.get("text_muted", "#80868b"),
+        }),
+        html.Span(tool_name, style={
+            "fontSize": "12px",
+            "fontWeight": "600",
+            "color": colors.get("text_primary", "#202124"),
+            "fontFamily": "'IBM Plex Mono', monospace",
+        }),
+    ], style={"display": "flex", "alignItems": "center"})
+
+    # Arguments section (collapsible)
+    args_section = None
+    if args_display:
+        args_section = html.Details([
+            html.Summary("Arguments", style={
+                "fontSize": "10px",
+                "color": colors.get("text_muted", "#80868b"),
+                "cursor": "pointer",
+                "marginTop": "4px",
+                "paddingLeft": "18px",
+                "position": "relative",
+            }),
+            html.Pre(args_display, style={
+                "fontSize": "10px",
+                "color": colors.get("text_secondary", "#5f6368"),
+                "background": colors.get("bg_tertiary", "#f1f3f4"),
+                "padding": "8px",
+                "borderRadius": "4px",
+                "marginTop": "4px",
+                "marginLeft": "18px",
+                "overflow": "auto",
+                "maxHeight": "150px",
+                "whiteSpace": "pre-wrap",
+                "wordBreak": "break-word",
+            })
+        ], style={"marginTop": "4px"})
+
+    # Result section (collapsible, only if completed)
+    result_section = None
+    if tool_result is not None and is_completed:
+        result_display = str(tool_result)
+        if len(result_display) > 500:
+            result_display = result_display[:500] + "..."
+
+        result_section = html.Details([
+            html.Summary("Result", style={
+                "fontSize": "10px",
+                "color": colors.get("text_muted", "#80868b"),
+                "cursor": "pointer",
+                "marginTop": "4px",
+                "paddingLeft": "18px",
+                "position": "relative",
+            }),
+            html.Pre(result_display, style={
+                "fontSize": "10px",
+                "color": colors.get("text_secondary", "#5f6368"),
+                "background": colors.get("bg_tertiary", "#f1f3f4"),
+                "padding": "8px",
+                "borderRadius": "4px",
+                "marginTop": "4px",
+                "marginLeft": "18px",
+                "overflow": "auto",
+                "maxHeight": "150px",
+                "whiteSpace": "pre-wrap",
+                "wordBreak": "break-word",
+            })
+        ], style={"marginTop": "4px"})
+
+    children = [tool_header]
+    if args_section:
+        children.append(args_section)
+    if result_section:
+        children.append(result_section)
+
+    return html.Div(children, style={
+        "padding": "8px 12px",
+        "background": colors.get("bg_secondary", "#f8f9fa"),
+        "borderLeft": f"2px solid {border_color}",
+        "marginBottom": "4px",
+        "fontSize": "12px",
+    })
+
+
+def format_tool_calls_inline(tool_calls: List[Dict], colors: Dict):
+    """Format multiple tool calls as an inline collapsible section.
+
+    Args:
+        tool_calls: List of tool call dicts with 'name', 'args', 'result', 'status'
+        colors: Color scheme dict
+    """
+    if not tool_calls:
+        return None
+
+    # Count statuses
+    completed = sum(1 for tc in tool_calls if tc.get("status") in ("success", "error"))
+    total = len(tool_calls)
+    running = sum(1 for tc in tool_calls if tc.get("status") == "running")
+
+    # Summary text
+    if running > 0:
+        summary_text = f"🔧 Tool Calls ({completed}/{total} completed, {running} running)"
+        summary_color = colors.get("warning", "#fbbc04")
+    elif completed == total:
+        summary_text = f"🔧 Tool Calls ({total} completed)"
+        summary_color = colors.get("todo", "#34a853")
+    else:
+        summary_text = f"🔧 Tool Calls ({completed}/{total})"
+        summary_color = colors.get("text_muted", "#80868b")
+
+    tool_elements = [
+        format_tool_call(tc, colors, is_completed=tc.get("status") in ("success", "error"))
+        for tc in tool_calls
+    ]
+
+    return html.Details([
+        html.Summary(summary_text, style={
+            "fontSize": "11px",
+            "fontWeight": "500",
+            "color": summary_color,
+            "cursor": "pointer",
+            "padding": "8px 12px",
+            "background": colors.get("bg_secondary", "#f8f9fa"),
+            "borderLeft": f"2px solid {summary_color}",
+            "userSelect": "none",
+            "marginBottom": "4px",
+        }),
+        html.Div(tool_elements, style={
+            "paddingLeft": "12px",
+        })
+    ], open=True, style={
+        "marginBottom": "8px",
+    })
+
+
+def format_interrupt(interrupt_data: Dict, colors: Dict):
+    """Format an interrupt request for human-in-the-loop interaction.
+
+    Args:
+        interrupt_data: Dict with 'action_requests' and/or 'message'
+        colors: Color scheme dict
+    """
+    if not interrupt_data:
+        return None
+
+    message = interrupt_data.get("message", "The agent needs your input to continue.")
+    action_requests = interrupt_data.get("action_requests", [])
+
+    children = [
+        html.Div([
+            html.Span("⚠️", style={"marginRight": "8px", "fontSize": "16px"}),
+            html.Span("Human Input Required", style={
+                "fontSize": "13px",
+                "fontWeight": "600",
+                "color": colors.get("warning", "#fbbc04"),
+            })
+        ], style={"marginBottom": "12px", "display": "flex", "alignItems": "center"}),
+        html.P(message, style={
+            "fontSize": "13px",
+            "color": colors.get("text_primary", "#202124"),
+            "marginBottom": "12px",
+        })
+    ]
+
+    # Show action requests if any
+    if action_requests:
+        for i, action in enumerate(action_requests):
+            action_type = action.get("type", "unknown")
+            action_tool = action.get("tool", "")
+            action_args = action.get("args", {})
+
+            action_children = [
+                html.Span(f"Tool: ", style={
+                    "fontSize": "11px",
+                    "color": colors.get("text_muted", "#80868b"),
+                }),
+                html.Span(f"{action_tool}", style={
+                    "fontSize": "12px",
+                    "fontWeight": "600",
+                    "fontFamily": "'IBM Plex Mono', monospace",
+                    "color": colors.get("warning", "#fbbc04"),
+                }),
+            ]
+
+            children.append(html.Div(action_children, style={"marginBottom": "8px"}))
+
+            # Show args for bash command specifically
+            if action_tool == "bash" and action_args:
+                command = action_args.get("command", "")
+                if command:
+                    children.append(html.Div([
+                        html.Span("Command: ", style={
+                            "fontSize": "11px",
+                            "color": colors.get("text_muted", "#80868b"),
+                        }),
+                        html.Pre(command, style={
+                            "fontSize": "12px",
+                            "fontFamily": "'IBM Plex Mono', monospace",
+                            "background": colors.get("bg_tertiary", "#f1f3f4"),
+                            "padding": "8px 12px",
+                            "borderRadius": "4px",
+                            "margin": "4px 0 12px 0",
+                            "whiteSpace": "pre-wrap",
+                            "wordBreak": "break-all",
+                        })
+                    ]))
+            elif action_args:
+                # Show other args in a compact format
+                args_str = json.dumps(action_args, indent=2)
+                if len(args_str) > 200:
+                    args_str = args_str[:200] + "..."
+                children.append(html.Pre(args_str, style={
+                    "fontSize": "11px",
+                    "fontFamily": "'IBM Plex Mono', monospace",
+                    "background": colors.get("bg_tertiary", "#f1f3f4"),
+                    "padding": "8px",
+                    "borderRadius": "4px",
+                    "margin": "4px 0 12px 0",
+                    "maxHeight": "100px",
+                    "overflow": "auto",
+                }))
+
+    # Input field for response
+    children.append(html.Div([
+        dcc.Input(
+            id="interrupt-input",
+            type="text",
+            placeholder="Type your response...",
+            style={
+                "width": "100%",
+                "padding": "10px 12px",
+                "border": f"1px solid {colors.get('border', '#dadce0')}",
+                "borderRadius": "4px",
+                "fontSize": "13px",
+                "marginBottom": "8px",
+            }
+        ),
+        html.Div([
+            html.Button("Approve", id="interrupt-approve-btn", n_clicks=0, style={
+                "background": colors.get("todo", "#34a853"),
+                "color": "#ffffff",
+                "border": "none",
+                "padding": "8px 16px",
+                "borderRadius": "4px",
+                "fontSize": "12px",
+                "fontWeight": "500",
+                "cursor": "pointer",
+                "marginRight": "8px",
+            }),
+            html.Button("Reject", id="interrupt-reject-btn", n_clicks=0, style={
+                "background": colors.get("error", "#ea4335"),
+                "color": "#ffffff",
+                "border": "none",
+                "padding": "8px 16px",
+                "borderRadius": "4px",
+                "fontSize": "12px",
+                "fontWeight": "500",
+                "cursor": "pointer",
+                "marginRight": "8px",
+            }),
+            html.Button("Edit", id="interrupt-edit-btn", n_clicks=0, style={
+                "background": colors.get("accent", "#1a73e8"),
+                "color": "#ffffff",
+                "border": "none",
+                "padding": "8px 16px",
+                "borderRadius": "4px",
+                "fontSize": "12px",
+                "fontWeight": "500",
+                "cursor": "pointer",
+            }),
+        ], style={"display": "flex"})
+    ]))
+
+    return html.Div(children, style={
+        "padding": "16px",
+        "background": "#fffbeb",
+        "border": f"1px solid {colors.get('warning', '#fbbc04')}",
+        "borderRadius": "6px",
         "marginBottom": "8px",
     })
 

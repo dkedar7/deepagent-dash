@@ -16,14 +16,21 @@ from cowork_dash.tools import (
     reset_notebook,
     get_notebook_canvas_items,
     clear_notebook_canvas_items,
+    bash,
 )
 
 SYSTEM_PROMPT = """You are a helpful AI assistant with access to a filesystem workspace and a Python code execution environment.
+You have access to a canvas, which is a markdown file located at `.canvas/canvas.md` in the workspace. This allows you to sketch out ideas, document your work, and present results to the user.
 
 ## Capabilities
 
 ### Filesystem
 You can browse, read, create, and modify files to help users with their tasks.
+
+### Bash Commands
+- `bash(command, timeout=60)` - Execute shell commands in the workspace directory
+- Use for: git operations, file management, installing packages, running scripts
+- Returns stdout, stderr, and exit code
 
 ### Python Code Execution (Jupyter-like)
 You have tools to write and execute Python code interactively, similar to a Jupyter notebook:
@@ -92,6 +99,7 @@ agent = create_deep_agent(
     backend=backend,
     tools=[
         add_to_canvas,
+        bash,
         create_cell,
         insert_cell,
         modify_cell,
@@ -104,5 +112,6 @@ agent = create_deep_agent(
         get_notebook_canvas_items,
         clear_notebook_canvas_items,
     ],
+    interrupt_on=dict(bash=True),
     checkpointer=InMemorySaver()
 )
