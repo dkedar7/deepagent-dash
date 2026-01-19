@@ -25,23 +25,26 @@ def format_message(role: str, content: str, colors: Dict, styles: Dict, is_new: 
             }
         )
 
+    # Use CSS classes for theme-aware styling
+    message_class = "message-enter chat-message" if is_new else "chat-message"
+    if is_user:
+        message_class += " chat-message-user"
+    else:
+        message_class += " chat-message-agent"
+
     return html.Div([
         html.Div([
-            html.Span("You" if is_user else "Agent", style={
+            html.Span("You" if is_user else "Agent", className="message-role-user" if is_user else "message-role-agent", style={
                 "fontSize": "12px", "fontWeight": "500",
-                "color": colors["accent"] if is_user else colors["text_muted"],
                 "textTransform": "uppercase", "letterSpacing": "0.5px",
             }),
-            html.Span(datetime.now().strftime("%H:%M"), style={
-                "fontSize": "11px", "color": colors["text_muted"], "marginLeft": "8px",
+            html.Span(datetime.now().strftime("%H:%M"), className="message-time", style={
+                "fontSize": "11px", "marginLeft": "8px",
             })
         ], style={"marginBottom": "8px"}),
         content_element
-    ], className="message-enter" if is_new else "", style={
+    ], className=message_class, style={
         "padding": "16px",
-        "background": colors["accent_light"] if is_user else colors["bg_primary"],
-        "borderLeft": f"3px solid {colors['accent'] if is_user else colors['border']}",
-        "boxShadow": "none" if is_user else styles["shadow"],
     })
 
 
@@ -49,18 +52,15 @@ def format_loading(colors: Dict):
     """Format loading indicator."""
     return html.Div([
         html.Div([
-            html.Span("Agent", style={
+            html.Span("Agent", className="message-role-agent", style={
                 "fontSize": "12px", "fontWeight": "500",
-                "color": colors["text_muted"], "textTransform": "uppercase",
+                "textTransform": "uppercase",
             }),
         ], style={"marginBottom": "8px"}),
-        html.Span("Thinking", className="loading-dots thinking-pulse", style={
-            "fontSize": "14px", "color": colors["thinking"], "fontWeight": "500",
+        html.Span("Thinking", className="loading-dots thinking-pulse thinking-text", style={
+            "fontSize": "14px", "fontWeight": "500",
         })
-    ], style={
-        "padding": "16px", "background": colors["bg_primary"],
-        "borderLeft": f"3px solid {colors['thinking']}",
-    })
+    ], className="chat-message chat-message-loading")
 
 
 def format_thinking(thinking_text: str, colors: Dict):
@@ -69,26 +69,11 @@ def format_thinking(thinking_text: str, colors: Dict):
         return None
 
     return html.Details([
-        html.Summary("🧠 Thinking", style={
-            "fontSize": "11px",
-            "fontWeight": "500",
-            "color": colors["thinking"],
-            "cursor": "pointer",
-            "padding": "8px 12px",
-            "background": colors["bg_secondary"],
-            "borderLeft": f"2px solid {colors['thinking']}",
-            "userSelect": "none",
-            "marginBottom": "4px",
-        }),
-        html.Div(thinking_text, style={
-            "fontSize": "12px",
-            "color": colors["text_secondary"],
-            "padding": "8px 12px",
-            "background": colors["bg_secondary"],
-            "borderLeft": f"2px solid {colors['thinking']}",
+        html.Summary("🧠 Thinking", className="details-summary details-summary-thinking"),
+        html.Div(thinking_text, className="details-content details-content-thinking", style={
             "whiteSpace": "pre-wrap",
         })
-    ], style={
+    ], className="chat-details", style={
         "marginBottom": "8px",
     })
 
@@ -154,23 +139,9 @@ def format_todos_inline(todos: Dict, colors: Dict):
     todo_items = format_todos(todos, colors)
 
     return html.Details([
-        html.Summary("📋 Task Progress", style={
-            "fontSize": "11px",
-            "fontWeight": "500",
-            "color": colors["todo"],
-            "cursor": "pointer",
-            "padding": "8px 12px",
-            "background": colors["bg_secondary"],
-            "borderLeft": f"2px solid {colors['todo']}",
-            "userSelect": "none",
-            "marginBottom": "4px",
-        }),
-        html.Div(todo_items, style={
-            "padding": "8px 12px",
-            "background": colors["bg_secondary"],
-            "borderLeft": f"2px solid {colors['todo']}",
-        })
-    ], open=True, style={
+        html.Summary("📋 Task Progress", className="details-summary details-summary-todo"),
+        html.Div(todo_items, className="details-content details-content-todo")
+    ], open=True, className="chat-details", style={
         "marginBottom": "8px",
     })
 
@@ -325,16 +296,16 @@ def format_tool_calls_inline(tool_calls: List[Dict], colors: Dict):
     total = len(tool_calls)
     running = sum(1 for tc in tool_calls if tc.get("status") == "running")
 
-    # Summary text
+    # Summary text and class
     if running > 0:
         summary_text = f"🔧 Tool Calls ({completed}/{total} completed, {running} running)"
-        summary_color = colors.get("warning", "#fbbc04")
+        summary_class = "details-summary details-summary-warning"
     elif completed == total:
         summary_text = f"🔧 Tool Calls ({total} completed)"
-        summary_color = colors.get("todo", "#34a853")
+        summary_class = "details-summary details-summary-success"
     else:
         summary_text = f"🔧 Tool Calls ({completed}/{total})"
-        summary_color = colors.get("text_muted", "#80868b")
+        summary_class = "details-summary details-summary-muted"
 
     tool_elements = [
         format_tool_call(tc, colors, is_completed=tc.get("status") in ("success", "error"))
@@ -342,21 +313,11 @@ def format_tool_calls_inline(tool_calls: List[Dict], colors: Dict):
     ]
 
     return html.Details([
-        html.Summary(summary_text, style={
-            "fontSize": "11px",
-            "fontWeight": "500",
-            "color": summary_color,
-            "cursor": "pointer",
-            "padding": "8px 12px",
-            "background": colors.get("bg_secondary", "#f8f9fa"),
-            "borderLeft": f"2px solid {summary_color}",
-            "userSelect": "none",
-            "marginBottom": "4px",
-        }),
+        html.Summary(summary_text, className=summary_class),
         html.Div(tool_elements, style={
             "paddingLeft": "12px",
         })
-    ], open=True, style={
+    ], open=True, className="chat-details", style={
         "marginBottom": "8px",
     })
 
@@ -501,7 +462,7 @@ def format_interrupt(interrupt_data: Dict, colors: Dict):
 
     return html.Div(children, style={
         "padding": "16px",
-        "background": "#fffbeb",
+        "background": colors.get("interrupt_bg", "#fffbeb"),
         "border": f"1px solid {colors.get('warning', '#fbbc04')}",
         "borderRadius": "6px",
         "marginBottom": "8px",
@@ -509,7 +470,7 @@ def format_interrupt(interrupt_data: Dict, colors: Dict):
 
 
 def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
-    """Render all canvas items."""
+    """Render all canvas items using CSS classes for theme awareness."""
     if not canvas_items:
         return html.Div([
             html.Div("🗒", style={
@@ -518,18 +479,16 @@ def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
                 "marginBottom": "16px",
                 "opacity": "0.3"
             }),
-            html.P("Canvas is empty", style={
+            html.P("Canvas is empty", className="canvas-empty-text", style={
                 "textAlign": "center",
-                "color": colors["text_muted"],
                 "fontSize": "14px"
             }),
-            html.P("The agent will add visualizations, charts, and notes here", style={
+            html.P("The agent will add visualizations, charts, and notes here", className="canvas-empty-text", style={
                 "textAlign": "center",
-                "color": colors["text_muted"],
                 "fontSize": "12px",
                 "marginTop": "8px"
             })
-        ], style={
+        ], className="canvas-empty", style={
             "display": "flex",
             "flexDirection": "column",
             "alignItems": "center",
@@ -547,12 +506,11 @@ def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
         # Add title if present
         if title:
             rendered_items.append(
-                html.H3(title, style={
+                html.H3(title, className="canvas-item-title", style={
                     "fontSize": "16px",
                     "fontWeight": "600",
                     "marginBottom": "12px",
                     "marginTop": "24px" if i > 0 else "0",
-                    "color": colors["text_primary"]
                 })
             )
 
@@ -562,23 +520,15 @@ def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
                 html.Div([
                     dcc.Markdown(
                         item.get("data", ""),
+                        className="canvas-markdown",
                         style={
                             "fontSize": "14px",
                             "lineHeight": "1.6",
-                            "color": colors["text_primary"],
                             "wordBreak": "break-word",
                             "overflowWrap": "break-word",
                         }
                     )
-                ], style={
-                    "marginBottom": "20px",
-                    "padding": "16px",
-                    "background": "#ffffff",
-                    "borderRadius": "6px",
-                    "border": f"1px solid {colors['border_light']}",
-                    "maxWidth": "100%",
-                    "overflow": "hidden",
-                })
+                ], className="canvas-item canvas-item-markdown")
             )
 
         elif item_type == "dataframe":
@@ -592,14 +542,8 @@ def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
                             style={"fontSize": "13px"}
                         )
                     )
-                ], style={
-                    "marginBottom": "20px",
-                    "padding": "16px",
-                    "background": "#ffffff",
-                    "borderRadius": "6px",
-                    "border": f"1px solid {colors['border_light']}",
+                ], className="canvas-item canvas-item-dataframe", style={
                     "overflowX": "auto",
-                    "maxWidth": "100%",
                 })
             )
 
@@ -617,15 +561,8 @@ def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
                             "objectFit": "contain",
                         }
                     )
-                ], style={
-                    "marginBottom": "20px",
-                    "padding": "16px",
-                    "background": "#ffffff",
-                    "borderRadius": "6px",
-                    "border": f"1px solid {colors['border_light']}",
+                ], className="canvas-item canvas-item-image", style={
                     "textAlign": "center",
-                    "maxWidth": "100%",
-                    "overflow": "hidden",
                 })
             )
 
@@ -644,15 +581,7 @@ def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
                             "responsive": True,
                         }
                     )
-                ], style={
-                    "marginBottom": "20px",
-                    "padding": "16px",
-                    "background": "#ffffff",
-                    "borderRadius": "6px",
-                    "border": f"1px solid {colors['border_light']}",
-                    "maxWidth": "100%",
-                    "overflow": "hidden",
-                })
+                ], className="canvas-item canvas-item-plotly")
             )
 
         elif item_type == "mermaid":
@@ -668,17 +597,11 @@ def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
                             "padding": "20px",
                             "width": "100%",
                             "overflow": "auto",
-                            "whiteSpace": "pre",  # Preserve whitespace for mermaid parsing
+                            "whiteSpace": "pre",
                         }
                     )
-                ], style={
-                    "marginBottom": "20px",
-                    "padding": "16px",
-                    "background": "#ffffff",
-                    "borderRadius": "6px",
-                    "border": f"1px solid {colors['border_light']}",
+                ], className="canvas-item canvas-item-mermaid", style={
                     "textAlign": "center",
-                    "maxWidth": "100%",
                     "overflow": "auto",
                 })
             )
@@ -689,21 +612,15 @@ def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
                 html.Div([
                     html.Code(
                         str(item),
+                        className="canvas-code",
                         style={
                             "fontSize": "12px",
-                            "color": colors["text_secondary"],
                             "display": "block",
                             "whiteSpace": "pre-wrap",
                             "wordBreak": "break-word",
                         }
                     )
-                ], style={
-                    "marginBottom": "20px",
-                    "padding": "16px",
-                    "background": "#ffffff",
-                    "borderRadius": "6px",
-                    "border": f"1px solid {colors['border_light']}",
-                    "maxWidth": "100%",
+                ], className="canvas-item canvas-item-code", style={
                     "overflow": "auto",
                 })
             )

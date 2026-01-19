@@ -2,6 +2,7 @@
 
 from dash import html, dcc
 import dash_mantine_components as dmc
+from dash_iconify import DashIconify
 
 from .file_utils import build_file_tree, render_file_tree
 
@@ -21,11 +22,14 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
     Returns:
         Dash layout component
     """
-    return dmc.MantineProvider([
-        # State stores
-        dcc.Store(id="chat-history", data=[{
-            "role": "assistant",
-            "content": f"""This is your AI-powered workspace. I can help you write code, analyze files, create visualizations, and more.
+    return dmc.MantineProvider(
+        id="mantine-provider",
+        forceColorScheme="light",
+        children=[
+            # State stores
+            dcc.Store(id="chat-history", data=[{
+                "role": "assistant",
+                "content": f"""This is your AI-powered workspace. I can help you write code, analyze files, create visualizations, and more.
 
 **Getting Started:**
 - Type a message below to chat with me
@@ -33,79 +37,88 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
 - Switch to **Canvas** tab to see charts and diagrams I create
 
 Let's get started!"""
-        }]),
-        dcc.Store(id="pending-message", data=None),
-        dcc.Store(id="expanded-folders", data=[]),
-        dcc.Store(id="file-to-view", data=None),
-        dcc.Store(id="file-click-tracker", data={}),
-        dcc.Download(id="file-download"),
+            }]),
+            dcc.Store(id="pending-message", data=None),
+            dcc.Store(id="expanded-folders", data=[]),
+            dcc.Store(id="file-to-view", data=None),
+            dcc.Store(id="file-click-tracker", data={}),
+            dcc.Store(id="theme-store", data="light", storage_type="local"),
+            dcc.Download(id="file-download"),
 
-        # Interval for polling agent updates (disabled by default)
-        dcc.Interval(id="poll-interval", interval=250, disabled=True),
+            # Interval for polling agent updates (disabled by default)
+            dcc.Interval(id="poll-interval", interval=250, disabled=True),
 
-        # File viewer modal
-        dmc.Modal(
-            id="file-modal",
-            title="",
-            size="xl",
-            children=[
-                html.Div(id="modal-content"),
-                html.Div([
-                    dmc.Button(
-                        "Download",
-                        id="modal-download-btn",
-                        variant="outline",
-                        color="blue",
-                        style={"marginTop": "16px"}
-                    )
-                ], style={"textAlign": "right"})
-            ],
-            opened=False,
-        ),
-
-        html.Div([
-            # Header
-            html.Header([
-                html.Div([
+            # File viewer modal
+            dmc.Modal(
+                id="file-modal",
+                title="",
+                size="xl",
+                children=[
+                    html.Div(id="modal-content"),
                     html.Div([
-                        html.H1(app_title or "DeepAgent Dash", style={
-                            "fontSize": "18px", "fontWeight": "600", "margin": "0",
-                        }),
-                        html.Span(app_subtitle or "AI-Powered Workspace", style={
-                            "fontSize": "12px", "color": colors["text_muted"], "marginLeft": "12px",
-                        })
-                    ], style={"display": "flex", "alignItems": "baseline"}),
+                        dmc.Button(
+                            "Download",
+                            id="modal-download-btn",
+                            variant="outline",
+                            color="blue",
+                            style={"marginTop": "16px"}
+                        )
+                    ], style={"textAlign": "right"})
+                ],
+                opened=False,
+            ),
+
+            html.Div([
+                # Header
+                html.Header([
                     html.Div([
-                        html.Div(style={
-                            "width": "8px", "height": "8px",
-                            "background": colors["success"] if agent else colors["error"],
-                            "marginRight": "8px",
-                        }),
-                        html.Span("Ready" if agent else "No Agent", style={
-                            "fontSize": "13px", "color": colors["text_secondary"],
-                        })
-                    ], style={"display": "flex", "alignItems": "center"})
-                ], style={
-                    "display": "flex", "justifyContent": "space-between",
-                    "alignItems": "center", "maxWidth": "1600px",
-                    "margin": "0 auto", "padding": "0 24px",
-                })
-            ], style={
-                "background": colors["bg_primary"],
-                "borderBottom": f"1px solid {colors['border']}",
-                "padding": "16px 0",
-            }),
+                        html.Div([
+                            html.H1(app_title or "DeepAgent Dash", id="app-title", style={
+                                "fontSize": "18px", "fontWeight": "600", "margin": "0",
+                            }),
+                            html.Span(app_subtitle or "AI-Powered Workspace", id="app-subtitle", style={
+                                "fontSize": "12px", "color": "var(--mantine-color-dimmed)", "marginLeft": "12px",
+                            })
+                        ], style={"display": "flex", "alignItems": "baseline"}),
+                        html.Div([
+                            dmc.ActionIcon(
+                                DashIconify(icon="radix-icons:moon", width=18),
+                                id="theme-toggle-btn",
+                                variant="outline",
+                                color="gray",
+                                size="lg",
+                                radius="md",
+                                style={"marginRight": "16px"},
+                            ),
+                            html.Div(style={
+                                "width": "8px", "height": "8px",
+                                "borderRadius": "50%",
+                                "background": "var(--mantine-color-green-6)" if agent else "var(--mantine-color-red-6)",
+                                "marginRight": "8px",
+                            }, id="agent-status-indicator"),
+                            dmc.Text("Ready" if agent else "No Agent", size="sm", c="dimmed", id="agent-status-text")
+                        ], style={"display": "flex", "alignItems": "center"})
+                    ], style={
+                        "display": "flex", "justifyContent": "space-between",
+                        "alignItems": "center", "maxWidth": "1600px",
+                        "margin": "0 auto", "padding": "0 24px",
+                    })
+                ], id="header", style={
+                    "background": "var(--mantine-color-body)",
+                    "borderBottom": "1px solid var(--mantine-color-default-border)",
+                    "padding": "16px 0",
+                }),
 
             # Main content
             html.Main([
                 # Chat panel
                 html.Div([
                     html.Div([
-                        html.H2("Chat", style={"fontSize": "14px", "fontWeight": "600", "margin": "0"}),
-                    ], style={
+                        dmc.Text("Chat", fw=600, size="sm", id="chat-header-text"),
+                    ], id="chat-header", style={
                         "padding": "16px 20px",
-                        "borderBottom": f"1px solid {colors['border']}",
-                        "background": colors["bg_primary"],
+                        "borderBottom": "1px solid var(--mantine-color-default-border)",
+                        "background": "var(--mantine-color-body)",
                     }),
 
                     # Messages
@@ -118,44 +131,34 @@ Let's get started!"""
                     html.Div([
                         dcc.Upload(
                             id="file-upload",
-                            children=html.Div("+", style={"fontSize": "20px", "color": colors["text_muted"]}),
-                            style={
-                                "width": "40px", "height": "40px",
-                                "display": "flex", "alignItems": "center", "justifyContent": "center",
-                                "cursor": "pointer", "border": f"1px solid {colors['border']}",
-                                "background": colors["bg_primary"],
-                            },
+                            children=dmc.ActionIcon(
+                                DashIconify(icon="radix-icons:plus", width=20),
+                                id="upload-plus",
+                                variant="default",
+                                size="lg",
+                            ),
+                            style={"cursor": "pointer"},
                             multiple=True
                         ),
-                        dcc.Input(
+                        dmc.TextInput(
                             id="chat-input",
-                            type="text",
                             placeholder="Type a message...",
                             className="chat-input",
-                            debounce=False,
-                            style={
-                                "flex": "1", "padding": "10px 16px", "height": "40px",
-                                "border": f"1px solid {colors['border']}",
-                                "background": colors["bg_primary"], "fontSize": "14px",
-                            },
+                            style={"flex": "1"},
+                            size="md",
                         ),
-                        html.Button("Send", id="send-btn", className="send-btn", style={
-                            "padding": "0 24px", "height": "40px",
-                            "background": colors["accent"], "color": "#ffffff",
-                            "border": "none", "fontSize": "14px", "fontWeight": "500",
-                            "cursor": "pointer",
-                        }),
-                    ], style={
+                        dmc.Button("Send", id="send-btn", className="send-btn", size="md"),
+                    ], id="chat-input-area", style={
                         "display": "flex", "gap": "8px", "padding": "16px 20px",
-                        "borderTop": f"1px solid {colors['border']}",
-                        "background": colors["bg_primary"],
+                        "borderTop": "1px solid var(--mantine-color-default-border)",
+                        "background": "var(--mantine-color-body)",
                     }),
-                    html.Div(id="upload-status", style={
-                        "padding": "0 20px 12px", "fontSize": "12px", "color": colors["text_muted"],
+                    dmc.Text(id="upload-status", size="xs", c="dimmed", style={
+                        "padding": "0 20px 12px",
                     }),
                 ], id="chat-panel", style={
                     "flex": "1", "display": "flex", "flexDirection": "column",
-                    "background": colors["bg_secondary"], "minWidth": "0",
+                    "background": "var(--mantine-color-gray-0)", "minWidth": "0",
                 }),
 
                 # Resize handle
@@ -170,44 +173,35 @@ Let's get started!"""
                 html.Div([
                     # Header with toggle
                     html.Div([
-                        html.Div([
-                            html.Button("Files", id="view-files-btn", style={
-                                "background": colors["accent"],
-                                "color": "#ffffff",
-                                "border": "none",
-                                "fontSize": "13px",
-                                "fontWeight": "500",
-                                "cursor": "pointer",
-                                "padding": "6px 12px",
-                                "borderRadius": "4px 0 0 4px",
-                            }),
-                            html.Button("Canvas", id="view-canvas-btn", style={
-                                "background": colors["bg_secondary"],
-                                "color": colors["text_secondary"],
-                                "border": "none",
-                                "fontSize": "13px",
-                                "fontWeight": "500",
-                                "cursor": "pointer",
-                                "padding": "6px 12px",
-                                "borderRadius": "0 4px 4px 0",
-                            }),
-                        ], style={"display": "flex"}),
-                        html.Div([
-                            html.Button(">_", id="open-terminal-btn", title="Open in Terminal", style={
-                                "background": "transparent", "border": "none",
-                                "fontSize": "13px", "cursor": "pointer", "padding": "4px 8px",
-                                "color": colors["text_secondary"], "fontFamily": "'IBM Plex Mono', monospace",
-                                "fontWeight": "600",
-                            }),
-                            html.Button("↻", id="refresh-btn", title="Refresh", style={
-                                "background": "transparent", "border": "none",
-                                "fontSize": "16px", "cursor": "pointer", "padding": "4px 8px",
-                            }),
-                        ], id="files-actions", style={"display": "flex", "alignItems": "center"})
-                    ], style={
+                        dmc.SegmentedControl(
+                            id="sidebar-view-toggle",
+                            data=[
+                                {"value": "files", "label": "Files"},
+                                {"value": "canvas", "label": "Canvas"},
+                            ],
+                            value="files",
+                            size="sm",
+                        ),
+                        dmc.Group([
+                            dmc.ActionIcon(
+                                DashIconify(icon="radix-icons:terminal", width=16),
+                                id="open-terminal-btn",
+                                variant="subtle",
+                                color="gray",
+                                size="md",
+                            ),
+                            dmc.ActionIcon(
+                                DashIconify(icon="radix-icons:reload", width=16),
+                                id="refresh-btn",
+                                variant="subtle",
+                                color="gray",
+                                size="md",
+                            ),
+                        ], id="files-actions", gap="xs")
+                    ], id="sidebar-header", style={
                         "display": "flex", "justifyContent": "space-between",
                         "alignItems": "center", "padding": "16px",
-                        "borderBottom": f"1px solid {colors['border']}",
+                        "borderBottom": "1px solid var(--mantine-color-default-border)",
                     }),
 
                     # Files view
@@ -218,73 +212,52 @@ Let's get started!"""
                             style={
                                 "flex": "1",
                                 "overflowY": "auto",
-                                "minHeight": "0",  # Critical for flex overflow
-                                "padding-bottom": "15px"  # Bottom margin for spacing
+                                "minHeight": "0",
+                                "paddingBottom": "15px"
                             }
                         ),
                     ], id="files-view", style={
                         "flex": "1",
-                        "minHeight": "0",  # Critical for flex overflow
+                        "minHeight": "0",
                         "display": "flex",
                         "flexDirection": "column",
-                        "padding-bottom": "5%"
+                        "paddingBottom": "5%"
                     }),
 
                     # Canvas view (hidden by default)
                     html.Div([
                         html.Div(id="canvas-content", style={
                             "flex": "1",
-                            "minHeight": "0",  # Critical for flex overflow
+                            "minHeight": "0",
                             "overflowY": "auto",
                             "padding": "20px",
-                            "background": "#ffffff",  # White background like a note
+                            "background": "var(--mantine-color-body)",
                         }),
                         # Canvas action buttons (floating at bottom)
-                        html.Div([
-                            html.Button("Refresh", id="refresh-canvas-btn", style={
-                                "background": colors["accent"],
-                                "color": "#ffffff",
-                                "border": "none",
-                                "fontSize": "13px",
-                                "fontWeight": "500",
-                                "cursor": "pointer",
-                                "padding": "8px 16px",
-                                "borderRadius": "4px",
-                                "marginRight": "8px",
-                            }),
-                            html.Button("Clear", id="clear-canvas-btn", style={
-                                "background": colors["error"],
-                                "color": "#ffffff",
-                                "border": "none",
-                                "fontSize": "13px",
-                                "fontWeight": "500",
-                                "cursor": "pointer",
-                                "padding": "8px 16px",
-                                "borderRadius": "4px",
-                            })
-                        ], style={
+                        dmc.Group([
+                            dmc.Button("Refresh", id="refresh-canvas-btn", size="sm"),
+                            dmc.Button("Clear", id="clear-canvas-btn", size="sm", color="red"),
+                        ], id="canvas-actions", justify="center", style={
                             "padding": "12px 20px",
-                            "borderTop": f"1px solid {colors['border']}",
-                            "background": colors["bg_primary"],
-                            "display": "flex",
-                            "justifyContent": "center"
+                            "borderTop": "1px solid var(--mantine-color-default-border)",
+                            "background": "var(--mantine-color-body)",
                         })
                     ], id="canvas-view", style={
                         "flex": "1",
-                        "minHeight": "0",  # Critical for flex overflow
+                        "minHeight": "0",
                         "display": "none",
                         "flexDirection": "column",
-                        "overflow": "hidden"  # Prevent overflow from this container
+                        "overflow": "hidden"
                     }),
                 ], id="sidebar-panel", style={
                     "flex": "1",
                     "minWidth": "0",
-                    "minHeight": "0",  # Critical for flex overflow
+                    "minHeight": "0",
                     "display": "flex",
                     "flexDirection": "column",
-                    "background": colors["bg_primary"],
-                    "borderLeft": f"1px solid {colors['border']}",
+                    "background": "var(--mantine-color-body)",
+                    "borderLeft": "1px solid var(--mantine-color-default-border)",
                 }),
             ], id="main-container", style={"display": "flex", "flex": "1", "overflow": "hidden"}),
-        ], style={"display": "flex", "flexDirection": "column", "height": "100vh"})
+        ], id="app-container", style={"display": "flex", "flexDirection": "column", "height": "100vh"})
     ])

@@ -7,9 +7,22 @@
 
 body {
     font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: #f8f9fa;
-    color: #202124;
+    background: var(--mantine-color-gray-0);
+    color: var(--mantine-color-text);
     line-height: 1.5;
+}
+
+/* DMC Theme Integration */
+:root {
+    --app-bg-primary: var(--mantine-color-body);
+    --app-bg-secondary: var(--mantine-color-gray-0);
+    --app-border: var(--mantine-color-default-border);
+    --app-text-primary: var(--mantine-color-text);
+    --app-text-muted: var(--mantine-color-dimmed);
+}
+
+[data-mantine-color-scheme="dark"] {
+    --app-bg-secondary: var(--mantine-color-dark-7);
 }
 
 /* Code and Preformatted Text */
@@ -108,4 +121,377 @@ details summary:hover {
     max-width: 100%;
     height: auto;
     max-height: 80vh;
+}
+
+/* Dark Theme Support */
+/* These styles use CSS custom properties that can be updated via JavaScript */
+
+/* Input placeholder styling */
+.chat-input::placeholder {
+    color: #80868b;
+}
+
+/* Hover effects for file items */
+.file-item:hover {
+    background: #e8eaed;
+}
+
+.folder-header:hover {
+    background: #e8eaed;
+}
+
+/* Dark mode specific overrides - using DMC data attribute */
+[data-mantine-color-scheme="dark"] body,
+:root[data-mantine-color-scheme="dark"] body {
+    background: var(--mantine-color-dark-7);
+    color: var(--mantine-color-dark-0);
+}
+
+[data-mantine-color-scheme="dark"] code,
+[data-mantine-color-scheme="dark"] pre {
+    background: var(--mantine-color-dark-6);
+    border-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] .dataframe-table th {
+    background: var(--mantine-color-dark-6);
+    border-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] .dataframe-table td {
+    border-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] details {
+    background: var(--mantine-color-dark-6);
+    border-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] details summary:hover {
+    background: var(--mantine-color-dark-5) !important;
+}
+
+[data-mantine-color-scheme="dark"] .resize-handle:hover {
+    background: var(--mantine-color-blue-4);
+}
+
+[data-mantine-color-scheme="dark"] .resize-handle:active {
+    background: var(--mantine-color-blue-3);
+}
+
+[data-mantine-color-scheme="dark"] .chat-input::placeholder {
+    color: var(--mantine-color-dark-2);
+}
+
+[data-mantine-color-scheme="dark"] .file-item:hover {
+    background: var(--mantine-color-dark-5);
+}
+
+[data-mantine-color-scheme="dark"] .folder-header:hover {
+    background: var(--mantine-color-dark-5);
+}
+
+/* Chat panel background for dark mode */
+[data-mantine-color-scheme="dark"] #chat-panel {
+    background: var(--mantine-color-dark-7);
+}
+
+[data-mantine-color-scheme="dark"] #chat-messages {
+    background: var(--mantine-color-dark-7);
+}
+
+/* ============================================
+   Chat Message Styling - Theme Aware
+   ============================================ */
+
+/* Base message styling */
+.chat-message {
+    padding: 16px;
+    background: var(--mantine-color-body);
+    border-left: 3px solid var(--mantine-color-default-border);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08);
+}
+
+.chat-message-user {
+    background: var(--mantine-color-blue-0);
+    border-left-color: var(--mantine-color-blue-6);
+    box-shadow: none;
+}
+
+.chat-message-agent {
+    background: var(--mantine-color-body);
+    border-left-color: var(--mantine-color-default-border);
+}
+
+.chat-message-loading {
+    background: var(--mantine-color-body);
+    border-left-color: var(--mantine-color-violet-6);
+    padding: 16px;
+}
+
+/* Dark mode message overrides */
+[data-mantine-color-scheme="dark"] .chat-message {
+    background: var(--mantine-color-dark-6);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+[data-mantine-color-scheme="dark"] .chat-message-user {
+    background: var(--mantine-color-dark-5);
+    border-left-color: var(--mantine-color-blue-4);
+}
+
+[data-mantine-color-scheme="dark"] .chat-message-agent {
+    background: var(--mantine-color-dark-6);
+    border-left-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] .chat-message-loading {
+    background: var(--mantine-color-dark-6);
+    border-left-color: var(--mantine-color-violet-4);
+}
+
+/* Message role labels */
+.message-role-user {
+    color: var(--mantine-color-blue-6);
+}
+
+.message-role-agent {
+    color: var(--mantine-color-dimmed);
+}
+
+.message-time {
+    color: var(--mantine-color-dimmed);
+}
+
+.thinking-text {
+    color: var(--mantine-color-violet-6);
+}
+
+[data-mantine-color-scheme="dark"] .message-role-user {
+    color: var(--mantine-color-blue-4);
+}
+
+[data-mantine-color-scheme="dark"] .thinking-text {
+    color: var(--mantine-color-violet-4);
+}
+
+/* ============================================
+   Details/Collapsible Styling - Theme Aware
+   ============================================ */
+
+.chat-details {
+    margin-bottom: 8px;
+}
+
+.details-summary {
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 8px 12px;
+    background: var(--mantine-color-gray-1);
+    border-left: 2px solid var(--mantine-color-dimmed);
+    user-select: none;
+    margin-bottom: 4px;
+    color: var(--mantine-color-dimmed);
+}
+
+.details-summary-thinking {
+    color: var(--mantine-color-violet-6);
+    border-left-color: var(--mantine-color-violet-6);
+}
+
+.details-summary-todo {
+    color: var(--mantine-color-teal-6);
+    border-left-color: var(--mantine-color-teal-6);
+}
+
+.details-summary-warning {
+    color: var(--mantine-color-yellow-6);
+    border-left-color: var(--mantine-color-yellow-6);
+}
+
+.details-summary-success {
+    color: var(--mantine-color-green-6);
+    border-left-color: var(--mantine-color-green-6);
+}
+
+.details-summary-muted {
+    color: var(--mantine-color-dimmed);
+    border-left-color: var(--mantine-color-dimmed);
+}
+
+.details-content {
+    font-size: 12px;
+    padding: 8px 12px;
+    background: var(--mantine-color-gray-1);
+    color: var(--mantine-color-text);
+}
+
+.details-content-thinking {
+    border-left: 2px solid var(--mantine-color-violet-6);
+}
+
+.details-content-todo {
+    border-left: 2px solid var(--mantine-color-teal-6);
+}
+
+/* Dark mode details */
+[data-mantine-color-scheme="dark"] .details-summary {
+    background: var(--mantine-color-dark-6);
+}
+
+[data-mantine-color-scheme="dark"] .details-summary-thinking {
+    color: var(--mantine-color-violet-4);
+    border-left-color: var(--mantine-color-violet-4);
+}
+
+[data-mantine-color-scheme="dark"] .details-summary-todo {
+    color: var(--mantine-color-teal-4);
+    border-left-color: var(--mantine-color-teal-4);
+}
+
+[data-mantine-color-scheme="dark"] .details-summary-warning {
+    color: var(--mantine-color-yellow-4);
+    border-left-color: var(--mantine-color-yellow-4);
+}
+
+[data-mantine-color-scheme="dark"] .details-summary-success {
+    color: var(--mantine-color-green-4);
+    border-left-color: var(--mantine-color-green-4);
+}
+
+[data-mantine-color-scheme="dark"] .details-content {
+    background: var(--mantine-color-dark-6);
+}
+
+[data-mantine-color-scheme="dark"] .details-content-thinking {
+    border-left-color: var(--mantine-color-violet-4);
+}
+
+[data-mantine-color-scheme="dark"] .details-content-todo {
+    border-left-color: var(--mantine-color-teal-4);
+}
+
+/* ============================================
+   File Tree Styling - Theme Aware
+   ============================================ */
+
+.file-tree-item {
+    background: transparent;
+    color: var(--mantine-color-text);
+    border-bottom: 1px solid var(--mantine-color-gray-2);
+    transition: background 0.15s ease;
+}
+
+.file-tree-item:hover {
+    background: var(--mantine-color-gray-1) !important;
+}
+
+.folder-icon {
+    color: var(--mantine-color-dimmed);
+}
+
+.folder-name {
+    color: var(--mantine-color-text);
+}
+
+.file-item {
+    color: var(--mantine-color-gray-7);
+}
+
+.file-tree-empty,
+.file-tree-loading {
+    color: var(--mantine-color-dimmed);
+}
+
+[data-mantine-color-scheme="dark"] .file-tree-item {
+    border-bottom-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] .file-tree-item:hover {
+    background: var(--mantine-color-dark-5) !important;
+}
+
+[data-mantine-color-scheme="dark"] .file-item {
+    color: var(--mantine-color-dark-1);
+}
+
+/* ============================================
+   Canvas Styling - Theme Aware
+   ============================================ */
+
+.canvas-empty {
+    color: var(--mantine-color-dimmed);
+}
+
+.canvas-empty-text {
+    color: var(--mantine-color-dimmed);
+}
+
+.canvas-item-title {
+    color: var(--mantine-color-text);
+}
+
+.canvas-item {
+    margin-bottom: 20px;
+    padding: 16px;
+    background: var(--mantine-color-body);
+    border-radius: 6px;
+    border: 1px solid var(--mantine-color-gray-3);
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.canvas-markdown {
+    color: var(--mantine-color-text);
+}
+
+.canvas-markdown h1,
+.canvas-markdown h2,
+.canvas-markdown h3,
+.canvas-markdown h4 {
+    color: var(--mantine-color-text);
+}
+
+.canvas-markdown p {
+    color: var(--mantine-color-text);
+}
+
+.canvas-markdown strong {
+    color: var(--mantine-color-blue-6);
+}
+
+.canvas-markdown code {
+    background: var(--mantine-color-gray-1);
+    color: var(--mantine-color-text);
+}
+
+.canvas-markdown pre {
+    background: var(--mantine-color-gray-1);
+}
+
+.canvas-code {
+    color: var(--mantine-color-gray-7);
+}
+
+/* Dark mode canvas */
+[data-mantine-color-scheme="dark"] .canvas-item {
+    background: var(--mantine-color-dark-6);
+    border-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-markdown strong {
+    color: var(--mantine-color-blue-4);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-markdown code {
+    background: var(--mantine-color-dark-5);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-markdown pre {
+    background: var(--mantine-color-dark-5);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-code {
+    color: var(--mantine-color-dark-1);
 }

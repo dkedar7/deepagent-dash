@@ -1,3 +1,48 @@
+// Theme handling - sync mermaid with DMC color scheme
+(function initTheme() {
+    function updateMermaidTheme(theme) {
+        if (typeof mermaid !== 'undefined') {
+            mermaid.initialize({
+                startOnLoad: false,
+                theme: theme === 'dark' ? 'dark' : 'default',
+                securityLevel: 'loose',
+                logLevel: 'error'
+            });
+            // Re-render any existing mermaid diagrams
+            renderMermaid();
+        }
+    }
+
+    // Watch for DMC color scheme changes via MutationObserver
+    function watchColorScheme() {
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'data-mantine-color-scheme') {
+                    const scheme = document.documentElement.getAttribute('data-mantine-color-scheme');
+                    updateMermaidTheme(scheme);
+                }
+            });
+        });
+
+        observer.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ['data-mantine-color-scheme']
+        });
+
+        // Initial theme check
+        const initialScheme = document.documentElement.getAttribute('data-mantine-color-scheme');
+        if (initialScheme) {
+            updateMermaidTheme(initialScheme);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', watchColorScheme);
+    } else {
+        watchColorScheme();
+    }
+})();
+
 // Initialize Mermaid
 mermaid.initialize({
     startOnLoad: false,

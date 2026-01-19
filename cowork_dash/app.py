@@ -17,8 +17,10 @@ from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 load_dotenv()
 
-from dash import Dash, html, Input, Output, State, callback_context, no_update, ALL
+from dash import Dash, html, Input, Output, State, callback_context, no_update, ALL, clientside_callback
 from dash.exceptions import PreventUpdate
+import dash_mantine_components as dmc
+from dash_iconify import DashIconify
 
 # Import custom modules
 from .canvas import parse_canvas_object, export_canvas_to_markdown, load_canvas_from_markdown
@@ -177,7 +179,7 @@ agent, AGENT_ERROR = load_agent_from_spec(config.AGENT_SPEC)
 # STYLING
 # =============================================================================
 
-COLORS = {
+COLORS_LIGHT = {
     "bg_primary": "#ffffff",
     "bg_secondary": "#f8f9fa",
     "bg_tertiary": "#f1f3f4",
@@ -195,12 +197,43 @@ COLORS = {
     "error": "#d93025",
     "thinking": "#7c4dff",
     "todo": "#00897b",
+    "canvas_bg": "#ffffff",
+    "interrupt_bg": "#fffbeb",
 }
+
+COLORS_DARK = {
+    "bg_primary": "#1e1e1e",
+    "bg_secondary": "#252526",
+    "bg_tertiary": "#2d2d2d",
+    "bg_hover": "#3c3c3c",
+    "accent": "#4fc3f7",
+    "accent_light": "#1e3a5f",
+    "accent_dark": "#81d4fa",
+    "text_primary": "#e0e0e0",
+    "text_secondary": "#b0b0b0",
+    "text_muted": "#808080",
+    "border": "#404040",
+    "border_light": "#333333",
+    "success": "#4caf50",
+    "warning": "#ffb74d",
+    "error": "#ef5350",
+    "thinking": "#b388ff",
+    "todo": "#26a69a",
+    "canvas_bg": "#2d2d2d",
+    "interrupt_bg": "#3d3520",
+}
+
+# Default to light theme
+COLORS = COLORS_LIGHT.copy()
 
 STYLES = {
     "shadow": "0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)",
     "transition": "all 0.15s ease",
 }
+
+def get_colors(theme: str = "light") -> dict:
+    """Get color scheme based on theme."""
+    return COLORS_DARK if theme == "dark" else COLORS_LIGHT
 
 # Note: File utilities imported from file_utils module
 # No local wrappers needed - file_utils functions will be called with WORKSPACE_ROOT
@@ -692,6 +725,7 @@ app = Dash(
     __name__,
     suppress_callback_exceptions=True,
     title=APP_TITLE,
+    external_stylesheets=dmc.styles.ALL,
 )
 
 # Load HTML template from file
@@ -727,20 +761,22 @@ app.layout = create_layout
 # Initial message display
 @app.callback(
     Output("chat-messages", "children"),
-    Input("chat-history", "data"),
+    [Input("chat-history", "data")],
+    [State("theme-store", "data")],
     prevent_initial_call=False
 )
-def display_initial_messages(history):
+def display_initial_messages(history, theme):
     """Display initial welcome message or chat history."""
     if not history:
         return []
 
+    colors = get_colors(theme or "light")
     messages = []
     for msg in history:
-        messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES, is_new=False))
+        messages.append(format_message(msg["role"], msg["content"], colors, STYLES, is_new=False))
         # Render tool calls stored with this message
         if msg.get("tool_calls"):
-            tool_calls_block = format_tool_calls_inline(msg["tool_calls"], COLORS)
+            tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
             if tool_calls_block:
                 messages.append(tool_calls_block)
     return messages
@@ -755,14 +791,16 @@ def display_initial_messages(history):
     [Input("send-btn", "n_clicks"),
      Input("chat-input", "n_submit")],
     [State("chat-input", "value"),
-     State("chat-history", "data")],
+     State("chat-history", "data"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def handle_send_immediate(n_clicks, n_submit, message, history):
+def handle_send_immediate(n_clicks, n_submit, message, history, theme):
     """Phase 1: Immediately show user message and start agent."""
     if not message or not message.strip():
         raise PreventUpdate
 
+    colors = get_colors(theme or "light")
     message = message.strip()
     history = history or []
     history.append({"role": "user", "content": message})
@@ -771,14 +809,14 @@ def handle_send_immediate(n_clicks, n_submit, message, history):
     messages = []
     for i, m in enumerate(history):
         is_new = (i == len(history) - 1)
-        messages.append(format_message(m["role"], m["content"], COLORS, STYLES, is_new=is_new))
+        messages.append(format_message(m["role"], m["content"], colors, STYLES, is_new=is_new))
         # Render tool calls stored with this message
         if m.get("tool_calls"):
-            tool_calls_block = format_tool_calls_inline(m["tool_calls"], COLORS)
+            tool_calls_block = format_tool_calls_inline(m["tool_calls"], colors)
             if tool_calls_block:
                 messages.append(tool_calls_block)
 
-    messages.append(format_loading(COLORS))
+    messages.append(format_loading(colors))
 
     # Start agent in background
     call_agent(message)
@@ -793,10 +831,11 @@ def handle_send_immediate(n_clicks, n_submit, message, history):
      Output("poll-interval", "disabled", allow_duplicate=True)],
     Input("poll-interval", "n_intervals"),
     [State("chat-history", "data"),
-     State("pending-message", "data")],
+     State("pending-message", "data"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def poll_agent_updates(n_intervals, history, pending_message):
+def poll_agent_updates(n_intervals, history, pending_message, theme):
     """Poll for agent updates and display them in real-time.
 
     Tool calls are stored in history and persist across turns.
@@ -806,15 +845,16 @@ def poll_agent_updates(n_intervals, history, pending_message):
     """
     state = get_agent_state()
     history = history or []
+    colors = get_colors(theme or "light")
 
     def render_history_messages(history_items):
         """Render all history items including tool calls."""
         messages = []
         for msg in history_items:
-            messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES))
+            messages.append(format_message(msg["role"], msg["content"], colors, STYLES))
             # Render tool calls stored with this message
             if msg.get("tool_calls"):
-                tool_calls_block = format_tool_calls_inline(msg["tool_calls"], COLORS)
+                tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
                 if tool_calls_block:
                     messages.append(tool_calls_block)
         return messages
@@ -826,22 +866,22 @@ def poll_agent_updates(n_intervals, history, pending_message):
 
         # Add current turn's thinking/tool_calls/todos before interrupt
         if state["thinking"]:
-            thinking_block = format_thinking(state["thinking"], COLORS)
+            thinking_block = format_thinking(state["thinking"], colors)
             if thinking_block:
                 messages.append(thinking_block)
 
         if state.get("tool_calls"):
-            tool_calls_block = format_tool_calls_inline(state["tool_calls"], COLORS)
+            tool_calls_block = format_tool_calls_inline(state["tool_calls"], colors)
             if tool_calls_block:
                 messages.append(tool_calls_block)
 
         if state["todos"]:
-            todos_block = format_todos_inline(state["todos"], COLORS)
+            todos_block = format_todos_inline(state["todos"], colors)
             if todos_block:
                 messages.append(todos_block)
 
         # Add interrupt UI
-        interrupt_block = format_interrupt(state["interrupt"], COLORS)
+        interrupt_block = format_interrupt(state["interrupt"], colors)
         if interrupt_block:
             messages.append(interrupt_block)
 
@@ -870,10 +910,10 @@ def poll_agent_updates(n_intervals, history, pending_message):
         final_messages = []
         for i, msg in enumerate(history):
             is_new = (i >= len(history) - 1)
-            final_messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES, is_new=is_new))
+            final_messages.append(format_message(msg["role"], msg["content"], colors, STYLES, is_new=is_new))
             # Render tool calls stored with this message
             if msg.get("tool_calls"):
-                tool_calls_block = format_tool_calls_inline(msg["tool_calls"], COLORS)
+                tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
                 if tool_calls_block:
                     final_messages.append(tool_calls_block)
 
@@ -885,24 +925,24 @@ def poll_agent_updates(n_intervals, history, pending_message):
 
         # Add current thinking if available
         if state["thinking"]:
-            thinking_block = format_thinking(state["thinking"], COLORS)
+            thinking_block = format_thinking(state["thinking"], colors)
             if thinking_block:
                 messages.append(thinking_block)
 
         # Add current tool calls if available
         if state.get("tool_calls"):
-            tool_calls_block = format_tool_calls_inline(state["tool_calls"], COLORS)
+            tool_calls_block = format_tool_calls_inline(state["tool_calls"], colors)
             if tool_calls_block:
                 messages.append(tool_calls_block)
 
         # Add current todos if available
         if state["todos"]:
-            todos_block = format_todos_inline(state["todos"], COLORS)
+            todos_block = format_todos_inline(state["todos"], colors)
             if todos_block:
                 messages.append(todos_block)
 
         # Add loading indicator
-        messages.append(format_loading(COLORS))
+        messages.append(format_loading(colors))
 
         # Continue polling
         return messages, no_update, False
@@ -916,10 +956,11 @@ def poll_agent_updates(n_intervals, history, pending_message):
      Input("interrupt-reject-btn", "n_clicks"),
      Input("interrupt-edit-btn", "n_clicks")],
     [State("interrupt-input", "value"),
-     State("chat-history", "data")],
+     State("chat-history", "data"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_value, history):
+def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_value, history, theme):
     """Handle user response to an interrupt.
 
     Note: Click parameters are required for Dash callback inputs but we use
@@ -936,6 +977,7 @@ def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_
     if not triggered_value or triggered_value <= 0:
         raise PreventUpdate
 
+    colors = get_colors(theme or "light")
     history = history or []
 
     # Determine action based on which button was clicked
@@ -965,14 +1007,14 @@ def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_
     # Show loading state while agent resumes
     messages = []
     for msg in history:
-        messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES))
+        messages.append(format_message(msg["role"], msg["content"], colors, STYLES))
         # Render tool calls stored with this message
         if msg.get("tool_calls"):
-            tool_calls_block = format_tool_calls_inline(msg["tool_calls"], COLORS)
+            tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
             if tool_calls_block:
                 messages.append(tool_calls_block)
 
-    messages.append(format_loading(COLORS))
+    messages.append(format_loading(colors))
 
     # Re-enable polling
     return messages, False
@@ -989,15 +1031,17 @@ def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_
      State({"type": "folder-icon", "path": ALL}, "id"),
      State({"type": "folder-children", "path": ALL}, "style"),
      State({"type": "folder-icon", "path": ALL}, "style"),
-     State({"type": "folder-children", "path": ALL}, "children")],
+     State({"type": "folder-children", "path": ALL}, "children"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles, icon_styles, children_content):
+def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles, icon_styles, children_content, theme):
     """Toggle folder expansion and lazy load contents if needed."""
     ctx = callback_context
     if not ctx.triggered or not any(n_clicks):
         raise PreventUpdate
 
+    colors = get_colors(theme or "light")
     triggered = ctx.triggered[0]["prop_id"]
     try:
         id_str = triggered.rsplit(".", 1)[0]
@@ -1044,7 +1088,7 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
                     # Load folder contents using real path
                     try:
                         folder_items = load_folder_contents(folder_rel_path, WORKSPACE_ROOT)
-                        loaded_content = render_file_tree(folder_items, COLORS, STYLES,
+                        loaded_content = render_file_tree(folder_items, colors, STYLES,
                                                           level=folder_rel_path.count("/") + 1,
                                                           parent_path=folder_rel_path)
                         new_children_content.append(loaded_content if loaded_content else current_content)
@@ -1073,7 +1117,7 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
                 new_icon_styles.append({
                     "marginRight": "8px",
                     "fontSize": "10px",
-                    "color": COLORS["text_muted"],
+                    "color": colors["text_muted"],
                     "transition": "transform 0.2s",
                     "display": "inline-block",
                     "transform": "rotate(0deg)" if is_expanded else "rotate(90deg)",
@@ -1095,62 +1139,64 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
      Output("file-click-tracker", "data")],
     Input({"type": "file-item", "path": ALL}, "n_clicks"),
     [State({"type": "file-item", "path": ALL}, "id"),
-     State("file-click-tracker", "data")],
+     State("file-click-tracker", "data"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def open_file_modal(all_n_clicks, all_ids, click_tracker):
+def open_file_modal(all_n_clicks, all_ids, click_tracker, theme):
     """Open file in modal - only on actual new clicks."""
     ctx = callback_context
-    
+
     if not ctx.triggered_id:
         raise PreventUpdate
-    
+
     # ctx.triggered_id is the dict {"type": "file-item", "path": "..."}
     if not isinstance(ctx.triggered_id, dict):
         raise PreventUpdate
-        
+
     if ctx.triggered_id.get("type") != "file-item":
         raise PreventUpdate
-    
+
     file_path = ctx.triggered_id.get("path")
     if not file_path:
         raise PreventUpdate
-    
+
     # Find the index of the triggered item to get its click count
     clicked_idx = None
     for i, item_id in enumerate(all_ids):
         if item_id.get("path") == file_path:
             clicked_idx = i
             break
-    
+
     if clicked_idx is None:
         raise PreventUpdate
-    
+
     # Get current click count for this file
     current_clicks = all_n_clicks[clicked_idx] if clicked_idx < len(all_n_clicks) else None
-    
+
     # Must be an actual click (not None, not 0)
     if not current_clicks:
         raise PreventUpdate
-    
+
     # Check if this is a NEW click vs a re-render with existing clicks
     click_tracker = click_tracker or {}
     prev_clicks = click_tracker.get(file_path, 0)
-    
+
     # Update tracker regardless of whether we open modal
     new_tracker = click_tracker.copy()
     new_tracker[file_path] = current_clicks
-    
+
     if current_clicks <= prev_clicks:
         # Not a new click - component was re-rendered or this click was already processed
         # Still need to return updated tracker to avoid stale state
         raise PreventUpdate
-    
+
     # Verify file exists and is a file
     full_path = WORKSPACE_ROOT / file_path
     if not full_path.exists() or not full_path.is_file():
         raise PreventUpdate
 
+    colors = get_colors(theme or "light")
     content, is_text, error = read_file_content(WORKSPACE_ROOT, file_path)
     filename = Path(file_path).name
 
@@ -1158,7 +1204,7 @@ def open_file_modal(all_n_clicks, all_ids, click_tracker):
         modal_content = html.Pre(
             content,
             style={
-                "background": COLORS["bg_tertiary"],
+                "background": colors["bg_tertiary"],
                 "padding": "16px",
                 "fontSize": "12px",
                 "fontFamily": "'IBM Plex Mono', monospace",
@@ -1167,83 +1213,24 @@ def open_file_modal(all_n_clicks, all_ids, click_tracker):
                 "whiteSpace": "pre-wrap",
                 "wordBreak": "break-word",
                 "margin": "0",
+                "color": colors["text_primary"],
             }
         )
     else:
         modal_content = html.Div([
             html.P(error or "Cannot display file", style={
-                "color": COLORS["text_muted"],
+                "color": colors["text_muted"],
                 "textAlign": "center",
                 "padding": "40px",
             }),
             html.P("Click Download to save the file.", style={
-                "color": COLORS["text_muted"],
+                "color": colors["text_muted"],
                 "textAlign": "center",
                 "fontSize": "13px",
             })
         ])
 
     return True, filename, modal_content, file_path, new_tracker
-    """Open file in modal."""
-    ctx = callback_context
-    
-    if not ctx.triggered_id:
-        raise PreventUpdate
-    
-    # ctx.triggered_id is the dict {"type": "file-item", "path": "..."}
-    if not isinstance(ctx.triggered_id, dict):
-        raise PreventUpdate
-        
-    if ctx.triggered_id.get("type") != "file-item":
-        raise PreventUpdate
-    
-    file_path = ctx.triggered_id.get("path")
-    if not file_path:
-        raise PreventUpdate
-    
-    # Get the actual click value from triggered
-    triggered_value = ctx.triggered[0]["value"]
-    if not triggered_value:  # None or 0
-        raise PreventUpdate
-    
-    # Verify file exists and is a file
-    full_path = WORKSPACE_ROOT / file_path
-    if not full_path.exists() or not full_path.is_file():
-        raise PreventUpdate
-
-    content, is_text, error = read_file_content(WORKSPACE_ROOT, file_path)
-    filename = Path(file_path).name
-
-    if is_text and content:
-        modal_content = html.Pre(
-            content,
-            style={
-                "background": COLORS["bg_tertiary"],
-                "padding": "16px",
-                "fontSize": "12px",
-                "fontFamily": "'IBM Plex Mono', monospace",
-                "overflow": "auto",
-                "maxHeight": "60vh",
-                "whiteSpace": "pre-wrap",
-                "wordBreak": "break-word",
-                "margin": "0",
-            }
-        )
-    else:
-        modal_content = html.Div([
-            html.P(error or "Cannot display file", style={
-                "color": COLORS["text_muted"],
-                "textAlign": "center",
-                "padding": "40px",
-            }),
-            html.P("Click Download to save the file.", style={
-                "color": COLORS["text_muted"],
-                "textAlign": "center",
-                "fontSize": "13px",
-            })
-        ])
-
-    return True, filename, modal_content, file_path
 
 # Modal download button
 @app.callback(
@@ -1316,11 +1303,13 @@ def open_terminal(n_clicks):
 @app.callback(
     Output("file-tree", "children"),
     Input("refresh-btn", "n_clicks"),
+    [State("theme-store", "data")],
     prevent_initial_call=True
 )
-def refresh_tree(n_clicks):
+def refresh_tree(n_clicks, theme):
     """Refresh file tree."""
-    return render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), COLORS, STYLES)
+    colors = get_colors(theme or "light")
+    return render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
 
 
 # File upload
@@ -1328,14 +1317,16 @@ def refresh_tree(n_clicks):
     [Output("upload-status", "children"),
      Output("file-tree", "children", allow_duplicate=True)],
     Input("file-upload", "contents"),
-    State("file-upload", "filename"),
+    [State("file-upload", "filename"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def handle_upload(contents, filenames):
+def handle_upload(contents, filenames, theme):
     """Handle file uploads."""
     if not contents:
         raise PreventUpdate
-    
+
+    colors = get_colors(theme or "light")
     uploaded = []
     for content, filename in zip(contents, filenames):
         try:
@@ -1349,61 +1340,35 @@ def handle_upload(contents, filenames):
             uploaded.append(filename)
         except Exception as e:
             print(f"Upload error: {e}")
-    
+
     if uploaded:
-        return f"Uploaded: {', '.join(uploaded)}", render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), COLORS, STYLES)
+        return f"Uploaded: {', '.join(uploaded)}", render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
     return "Upload failed", no_update
 
 
-# View toggle callbacks
+# View toggle callbacks - using SegmentedControl
 @app.callback(
     [Output("files-view", "style"),
      Output("canvas-view", "style"),
-     Output("view-files-btn", "style"),
-     Output("view-canvas-btn", "style"),
      Output("files-actions", "style")],
-    [Input("view-files-btn", "n_clicks"),
-     Input("view-canvas-btn", "n_clicks")],
+    [Input("sidebar-view-toggle", "value")],
     prevent_initial_call=True
 )
-def toggle_view(files_clicks, canvas_clicks):
-    """Toggle between files and canvas view."""
-    ctx = callback_context
-    if not ctx.triggered:
+def toggle_view(view_value):
+    """Toggle between files and canvas view using SegmentedControl."""
+    if not view_value:
         raise PreventUpdate
 
-    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
-
-    if button_id == "view-canvas-btn":
+    if view_value == "canvas":
         # Show canvas, hide files
         return (
             {"flex": "1", "display": "none", "flexDirection": "column"},
             {
                 "flex": "1",
-                "minHeight": "0",  # Critical for flex overflow
+                "minHeight": "0",
                 "display": "flex",
                 "flexDirection": "column",
-                "overflow": "hidden"  # Prevent overflow from this container
-            },
-            {
-                "background": COLORS["bg_secondary"],
-                "color": COLORS["text_secondary"],
-                "border": "none",
-                "fontSize": "13px",
-                "fontWeight": "500",
-                "cursor": "pointer",
-                "padding": "6px 12px",
-                "borderRadius": "4px 0 0 4px",
-            },
-            {
-                "background": COLORS["accent"],
-                "color": "#ffffff",
-                "border": "none",
-                "fontSize": "13px",
-                "fontWeight": "500",
-                "cursor": "pointer",
-                "padding": "6px 12px",
-                "borderRadius": "0 4px 4px 0",
+                "overflow": "hidden"
             },
             {"display": "none"}
         )
@@ -1412,37 +1377,17 @@ def toggle_view(files_clicks, canvas_clicks):
         return (
             {
                 "flex": "1",
-                "minHeight": "0",  # Critical for flex overflow
+                "minHeight": "0",
                 "display": "flex",
                 "flexDirection": "column",
-                "padding-bottom": "5%"  # Bottom padding for spacing
+                "paddingBottom": "5%"
             },
             {
                 "flex": "1",
-                "minHeight": "0",  # Critical for flex overflow
+                "minHeight": "0",
                 "display": "none",
                 "flexDirection": "column",
-                "overflow": "hidden"  # Prevent overflow from this container
-            },
-            {
-                "background": COLORS["accent"],
-                "color": "#ffffff",
-                "border": "none",
-                "fontSize": "13px",
-                "fontWeight": "500",
-                "cursor": "pointer",
-                "padding": "6px 12px",
-                "borderRadius": "4px 0 0 4px",
-            },
-            {
-                "background": COLORS["bg_secondary"],
-                "color": COLORS["text_secondary"],
-                "border": "none",
-                "fontSize": "13px",
-                "fontWeight": "500",
-                "cursor": "pointer",
-                "padding": "6px 12px",
-                "borderRadius": "0 4px 4px 0",
+                "overflow": "hidden"
             },
             {"display": "flex", "alignItems": "center"}
         )
@@ -1452,16 +1397,18 @@ def toggle_view(files_clicks, canvas_clicks):
 @app.callback(
     Output("canvas-content", "children"),
     [Input("poll-interval", "n_intervals"),
-     Input("view-canvas-btn", "n_clicks")],
+     Input("sidebar-view-toggle", "value")],
+    [State("theme-store", "data")],
     prevent_initial_call=False
 )
-def update_canvas_content(n_intervals, canvas_clicks):
+def update_canvas_content(n_intervals, view_value, theme):
     """Update canvas content from agent state."""
     state = get_agent_state()
     canvas_items = state.get("canvas", [])
+    colors = get_colors(theme or "light")
 
     # Use imported rendering function
-    return render_canvas_items(canvas_items, COLORS)
+    return render_canvas_items(canvas_items, colors)
 
 
 
@@ -1469,14 +1416,16 @@ def update_canvas_content(n_intervals, canvas_clicks):
 @app.callback(
     Output("canvas-content", "children", allow_duplicate=True),
     Input("refresh-canvas-btn", "n_clicks"),
+    [State("theme-store", "data")],
     prevent_initial_call=True
 )
-def refresh_canvas(n_clicks):
+def refresh_canvas(n_clicks, theme):
     """Refresh canvas by reloading from .canvas/canvas.md file."""
     if not n_clicks:
         raise PreventUpdate
 
     global _agent_state
+    colors = get_colors(theme or "light")
 
     # Reload canvas from markdown file
     canvas_items = load_canvas_from_markdown(WORKSPACE_ROOT)
@@ -1486,21 +1435,23 @@ def refresh_canvas(n_clicks):
         _agent_state["canvas"] = canvas_items
 
     # Render the canvas items
-    return render_canvas_items(canvas_items, COLORS)
+    return render_canvas_items(canvas_items, colors)
 
 
 # Clear canvas callback
 @app.callback(
     Output("canvas-content", "children", allow_duplicate=True),
     Input("clear-canvas-btn", "n_clicks"),
+    [State("theme-store", "data")],
     prevent_initial_call=True
 )
-def clear_canvas(n_clicks):
+def clear_canvas(n_clicks, theme):
     """Clear the canvas and archive the .canvas folder with a timestamp."""
     if not n_clicks:
         raise PreventUpdate
 
     global _agent_state
+    colors = get_colors(theme or "light")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -1528,12 +1479,12 @@ def clear_canvas(n_clicks):
         }),
         html.P("Canvas is empty", style={
             "textAlign": "center",
-            "color": COLORS["text_muted"],
+            "color": colors["text_muted"],
             "fontSize": "14px"
         }),
         html.P("The agent will add visualizations, charts, and notes here", style={
             "textAlign": "center",
-            "color": COLORS["text_muted"],
+            "color": colors["text_muted"],
             "fontSize": "12px",
             "marginTop": "8px"
         })
@@ -1545,6 +1496,55 @@ def clear_canvas(n_clicks):
         "height": "100%",
         "padding": "40px"
     })
+
+
+# =============================================================================
+# THEME TOGGLE CALLBACK - Using DMC 2.4 forceColorScheme
+# =============================================================================
+
+@app.callback(
+    [Output("theme-store", "data"),
+     Output("mantine-provider", "forceColorScheme"),
+     Output("theme-toggle-btn", "children")],
+    [Input("theme-toggle-btn", "n_clicks")],
+    [State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def toggle_theme(n_clicks, current_theme):
+    """Toggle between light and dark theme using DMC's forceColorScheme."""
+    if not n_clicks:
+        raise PreventUpdate
+
+    # Toggle theme
+    new_theme = "dark" if current_theme == "light" else "light"
+
+    # Update the icon
+    toggle_icon = DashIconify(
+        icon="radix-icons:sun" if new_theme == "dark" else "radix-icons:moon",
+        width=18
+    )
+
+    return new_theme, new_theme, toggle_icon
+
+
+# Callback to initialize theme on page load
+@app.callback(
+    [Output("mantine-provider", "forceColorScheme", allow_duplicate=True),
+     Output("theme-toggle-btn", "children", allow_duplicate=True)],
+    [Input("theme-store", "data")],
+    prevent_initial_call='initial_duplicate'
+)
+def initialize_theme(theme):
+    """Initialize theme on page load from stored preference."""
+    if not theme:
+        theme = "light"
+
+    toggle_icon = DashIconify(
+        icon="radix-icons:sun" if theme == "dark" else "radix-icons:moon",
+        width=18
+    )
+
+    return theme, toggle_icon
 
 
 # =============================================================================
