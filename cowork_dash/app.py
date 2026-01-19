@@ -17,15 +17,18 @@ from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 load_dotenv()
 
-from dash import Dash, html, Input, Output, State, callback_context, no_update, ALL
+from dash import Dash, html, Input, Output, State, callback_context, no_update, ALL, clientside_callback
 from dash.exceptions import PreventUpdate
+import dash_mantine_components as dmc
+from dash_iconify import DashIconify
 
 # Import custom modules
 from .canvas import parse_canvas_object, export_canvas_to_markdown, load_canvas_from_markdown
 from .file_utils import build_file_tree, render_file_tree, read_file_content, get_file_download_data, load_folder_contents
 from .components import (
     format_message, format_loading, format_thinking, format_todos,
-    format_todos_inline, render_canvas_items
+    format_todos_inline, render_canvas_items, format_tool_calls_inline,
+    format_interrupt
 )
 from .layout import create_layout as create_layout_component
 
@@ -176,7 +179,7 @@ agent, AGENT_ERROR = load_agent_from_spec(config.AGENT_SPEC)
 # STYLING
 # =============================================================================
 
-COLORS = {
+COLORS_LIGHT = {
     "bg_primary": "#ffffff",
     "bg_secondary": "#f8f9fa",
     "bg_tertiary": "#f1f3f4",
@@ -194,12 +197,43 @@ COLORS = {
     "error": "#d93025",
     "thinking": "#7c4dff",
     "todo": "#00897b",
+    "canvas_bg": "#ffffff",
+    "interrupt_bg": "#fffbeb",
 }
+
+COLORS_DARK = {
+    "bg_primary": "#1e1e1e",
+    "bg_secondary": "#252526",
+    "bg_tertiary": "#2d2d2d",
+    "bg_hover": "#3c3c3c",
+    "accent": "#4fc3f7",
+    "accent_light": "#1e3a5f",
+    "accent_dark": "#81d4fa",
+    "text_primary": "#e0e0e0",
+    "text_secondary": "#b0b0b0",
+    "text_muted": "#808080",
+    "border": "#404040",
+    "border_light": "#333333",
+    "success": "#4caf50",
+    "warning": "#ffb74d",
+    "error": "#ef5350",
+    "thinking": "#b388ff",
+    "todo": "#26a69a",
+    "canvas_bg": "#2d2d2d",
+    "interrupt_bg": "#3d3520",
+}
+
+# Default to light theme
+COLORS = COLORS_LIGHT.copy()
 
 STYLES = {
     "shadow": "0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)",
     "transition": "all 0.15s ease",
 }
+
+def get_colors(theme: str = "light") -> dict:
+    """Get color scheme based on theme."""
+    return COLORS_DARK if theme == "dark" else COLORS_LIGHT
 
 # Note: File utilities imported from file_utils module
 # No local wrappers needed - file_utils functions will be called with WORKSPACE_ROOT
@@ -213,25 +247,83 @@ _agent_state = {
     "running": False,
     "thinking": "",
     "todos": [],
+    "tool_calls": [],  # Current turn's tool calls (reset each turn)
     "canvas": load_canvas_from_markdown(WORKSPACE_ROOT),  # Load from canvas.md if exists
     "response": "",
     "error": None,
-    "last_update": time.time()
+    "interrupt": None,  # Track interrupt requests for human-in-the-loop
+    "last_update": time.time(),
+    "start_time": None,  # Track when agent started for response time calculation
 }
 _agent_state_lock = threading.Lock()
 
-def _run_agent_stream(message: str):
-    """Run agent in background thread and update global state in real-time."""
+def _run_agent_stream(message: str, resume_data: Dict = None):
+    """Run agent in background thread and update global state in real-time.
+
+    Args:
+        message: User message to send to agent
+        resume_data: Optional dict with 'decisions' to resume from interrupt
+    """
     if not agent:
         with _agent_state_lock:
             _agent_state["response"] = f"⚠️ {_agent_state['error']}\n\nPlease check your setup and try again."
             _agent_state["running"] = False
         return
 
-    try:
-        agent_input = {"messages": [{"role": "user", "content": message}]}
+    # Track tool calls by their ID for updating status
+    tool_call_map = {}
 
-        for update in agent.stream(agent_input, stream_mode="updates", config=dict(configurable=dict(thread_id=thread_id))):
+    def _serialize_tool_call(tc) -> Dict:
+        """Serialize a tool call to a dictionary."""
+        if isinstance(tc, dict):
+            return {
+                "id": tc.get("id"),
+                "name": tc.get("name"),
+                "args": tc.get("args", {}),
+                "status": "running",
+                "result": None
+            }
+        else:
+            return {
+                "id": getattr(tc, 'id', None),
+                "name": getattr(tc, 'name', None),
+                "args": getattr(tc, 'args', {}),
+                "status": "running",
+                "result": None
+            }
+
+    def _update_tool_call_result(tool_call_id: str, result: Any, status: str = "success"):
+        """Update a tool call with its result."""
+        with _agent_state_lock:
+            for tc in _agent_state["tool_calls"]:
+                if tc.get("id") == tool_call_id:
+                    tc["result"] = result
+                    tc["status"] = status
+                    break
+            _agent_state["last_update"] = time.time()
+
+    try:
+        # Prepare input based on whether we're resuming or starting fresh
+        stream_config = dict(configurable=dict(thread_id=thread_id))
+
+        if message == "__RESUME__":
+            # Resume from interrupt
+            from langgraph.types import Command
+            agent_input = Command(resume=resume_data)
+        else:
+            agent_input = {"messages": [{"role": "user", "content": message}]}
+
+        for update in agent.stream(agent_input, stream_mode="updates", config=stream_config):
+            # Check for interrupt
+            if isinstance(update, dict) and "__interrupt__" in update:
+                interrupt_value = update["__interrupt__"]
+                interrupt_data = _process_interrupt(interrupt_value)
+                with _agent_state_lock:
+                    _agent_state["interrupt"] = interrupt_data
+                    _agent_state["running"] = False  # Pause until user responds
+                    _agent_state["last_update"] = time.time()
+                return  # Exit stream, wait for user to resume
+
             if isinstance(update, dict):
                 for _, state_data in update.items():
                     if isinstance(state_data, dict) and "messages" in state_data:
@@ -240,7 +332,38 @@ def _run_agent_stream(message: str):
                             last_msg = msgs[-1] if isinstance(msgs, list) else msgs
                             msg_type = last_msg.__class__.__name__ if hasattr(last_msg, '__class__') else None
 
-                            if msg_type == 'ToolMessage' and hasattr(last_msg, 'name'):
+                            # Capture AIMessage tool_calls
+                            if msg_type == 'AIMessage' and hasattr(last_msg, 'tool_calls') and last_msg.tool_calls:
+                                new_tool_calls = []
+                                for tc in last_msg.tool_calls:
+                                    serialized = _serialize_tool_call(tc)
+                                    tool_call_map[serialized["id"]] = serialized
+                                    new_tool_calls.append(serialized)
+
+                                with _agent_state_lock:
+                                    _agent_state["tool_calls"].extend(new_tool_calls)
+                                    _agent_state["last_update"] = time.time()
+
+                            elif msg_type == 'ToolMessage' and hasattr(last_msg, 'name'):
+                                # Update tool call status when we get the result
+                                tool_call_id = getattr(last_msg, 'tool_call_id', None)
+                                if tool_call_id:
+                                    # Determine status based on content
+                                    content = last_msg.content
+                                    status = "success"
+                                    if isinstance(content, str) and ("error" in content.lower() or "Error:" in content):
+                                        status = "error"
+                                    elif isinstance(content, dict) and content.get("error"):
+                                        status = "error"
+
+                                    # Truncate result for display
+                                    result_display = str(content)
+                                    if len(result_display) > 1000:
+                                        result_display = result_display[:1000] + "..."
+
+                                    _update_tool_call_result(tool_call_id, result_display, status)
+
+                                # Handle specific tool messages
                                 if last_msg.name == 'think_tool':
                                     content = last_msg.content
                                     thinking_text = ""
@@ -306,6 +429,45 @@ def _run_agent_stream(message: str):
                                         except Exception as e:
                                             print(f"Failed to export canvas: {e}")
 
+                                elif last_msg.name in ('execute_cell', 'execute_all_cells'):
+                                    # Extract canvas_items from cell execution results
+                                    content = last_msg.content
+                                    canvas_items_to_add = []
+
+                                    if isinstance(content, str):
+                                        try:
+                                            parsed = json.loads(content)
+                                            # execute_cell returns a dict, execute_all_cells returns a list
+                                            if isinstance(parsed, dict):
+                                                canvas_items_to_add = parsed.get('canvas_items', [])
+                                            elif isinstance(parsed, list):
+                                                # execute_all_cells returns list of results
+                                                for result in parsed:
+                                                    if isinstance(result, dict):
+                                                        canvas_items_to_add.extend(result.get('canvas_items', []))
+                                        except:
+                                            pass
+                                    elif isinstance(content, dict):
+                                        canvas_items_to_add = content.get('canvas_items', [])
+                                    elif isinstance(content, list):
+                                        for result in content:
+                                            if isinstance(result, dict):
+                                                canvas_items_to_add.extend(result.get('canvas_items', []))
+
+                                    # Add any canvas items found
+                                    if canvas_items_to_add:
+                                        with _agent_state_lock:
+                                            for item in canvas_items_to_add:
+                                                if isinstance(item, dict) and item.get('type'):
+                                                    _agent_state["canvas"].append(item)
+                                            _agent_state["last_update"] = time.time()
+
+                                            # Export to markdown file
+                                            try:
+                                                export_canvas_to_markdown(_agent_state["canvas"], WORKSPACE_ROOT)
+                                            except Exception as e:
+                                                print(f"Failed to export canvas: {e}")
+
                             elif hasattr(last_msg, 'content'):
                                 content = last_msg.content
                                 response_text = ""
@@ -336,24 +498,219 @@ def _run_agent_stream(message: str):
             _agent_state["running"] = False
             _agent_state["last_update"] = time.time()
 
-def call_agent(message: str):
-    """Start agent execution in background thread."""
+
+def _process_interrupt(interrupt_value: Any) -> Dict[str, Any]:
+    """Process a LangGraph interrupt value and convert to serializable format.
+
+    Args:
+        interrupt_value: The interrupt value from LangGraph
+
+    Returns:
+        Dict with 'message' and 'action_requests' for UI display
+    """
+    interrupt_data = {
+        "message": "The agent needs your input to continue.",
+        "action_requests": [],
+        "raw": None
+    }
+
+    # Handle different interrupt formats
+    if isinstance(interrupt_value, (list, tuple)) and len(interrupt_value) > 0:
+        first_item = interrupt_value[0]
+
+        # Check if it's an Interrupt object (from deepagents interrupt_on)
+        if hasattr(first_item, 'value'):
+            # This is a LangGraph Interrupt object
+            for item in interrupt_value:
+                value = getattr(item, 'value', None)
+
+                # deepagents interrupt_on stores tool call info in a specific format:
+                # {'action_requests': [{'name': 'bash', 'args': {...}, 'description': '...'}], 'review_configs': [...]}
+                if value is not None and isinstance(value, dict):
+                    # Check for deepagents format with action_requests
+                    action_requests = value.get('action_requests', [])
+                    if action_requests:
+                        for action_req in action_requests:
+                            tool_name = action_req.get('name', 'unknown')
+                            tool_args = action_req.get('args', {})
+                            interrupt_data["action_requests"].append({
+                                "type": "tool_call",
+                                "tool": tool_name,
+                                "args": tool_args,
+                            })
+                            interrupt_data["message"] = f"The agent wants to execute: {tool_name}"
+                    else:
+                        # Fallback: direct tool call format
+                        tool_name = value.get('name', value.get('tool', 'unknown'))
+                        tool_args = value.get('args', value.get('arguments', {}))
+                        if tool_name != 'unknown':
+                            interrupt_data["action_requests"].append({
+                                "type": "tool_call",
+                                "tool": tool_name,
+                                "args": tool_args,
+                            })
+                            interrupt_data["message"] = f"The agent wants to execute: {tool_name}"
+                        else:
+                            interrupt_data["message"] = str(value)
+                elif value is not None:
+                    interrupt_data["message"] = str(value)
+
+        # Check if it's an ActionRequest or similar
+        elif hasattr(first_item, 'action'):
+            for item in interrupt_value:
+                action = getattr(item, 'action', None)
+                if action:
+                    interrupt_data["action_requests"].append({
+                        "type": getattr(action, 'type', 'unknown'),
+                        "tool": getattr(action, 'name', getattr(action, 'tool', '')),
+                        "args": getattr(action, 'args', {}),
+                    })
+        elif isinstance(first_item, dict):
+            # Check if it's a tool call dict
+            if 'name' in first_item or 'tool' in first_item:
+                for item in interrupt_value:
+                    tool_name = item.get('name', item.get('tool', 'unknown'))
+                    tool_args = item.get('args', item.get('arguments', {}))
+                    interrupt_data["action_requests"].append({
+                        "type": "tool_call",
+                        "tool": tool_name,
+                        "args": tool_args,
+                    })
+                    interrupt_data["message"] = f"The agent wants to execute: {tool_name}"
+            else:
+                interrupt_data["action_requests"] = list(interrupt_value)
+        else:
+            interrupt_data["message"] = str(first_item)
+    elif isinstance(interrupt_value, str):
+        interrupt_data["message"] = interrupt_value
+    elif isinstance(interrupt_value, dict):
+        interrupt_data["message"] = interrupt_value.get("message", str(interrupt_value))
+        interrupt_data["action_requests"] = interrupt_value.get("action_requests", [])
+
+    # Store raw value for resume
+    try:
+        interrupt_data["raw"] = interrupt_value
+    except:
+        pass
+
+    return interrupt_data
+
+def call_agent(message: str, resume_data: Dict = None):
+    """Start agent execution in background thread.
+
+    Args:
+        message: User message to send to agent
+        resume_data: Optional dict with decisions to resume from interrupt
+    """
     # Reset state but preserve canvas - do it all atomically
     with _agent_state_lock:
         existing_canvas = _agent_state.get("canvas", []).copy()
+
         _agent_state.clear()
         _agent_state.update({
             "running": True,
             "thinking": "",
             "todos": [],
+            "tool_calls": [],  # Reset tool calls for this turn
             "canvas": existing_canvas,  # Preserve existing canvas
             "response": "",
             "error": None,
-            "last_update": time.time()
+            "interrupt": None,  # Clear any previous interrupt
+            "last_update": time.time(),
+            "start_time": time.time(),  # Track when agent started
         })
 
     # Start background thread
-    thread = threading.Thread(target=_run_agent_stream, args=(message,))
+    thread = threading.Thread(target=_run_agent_stream, args=(message, resume_data))
+    thread.daemon = True
+    thread.start()
+
+
+def resume_agent_from_interrupt(decision: str, action: str = "approve", action_requests: List[Dict] = None):
+    """Resume agent from an interrupt with the user's decision.
+
+    Args:
+        decision: User's response/decision text
+        action: One of 'approve', 'reject', 'edit'
+        action_requests: List of action requests from the interrupt (for edit mode)
+    """
+    with _agent_state_lock:
+        interrupt_data = _agent_state.get("interrupt")
+        if not interrupt_data:
+            return
+
+        # Get action requests from interrupt data if not provided
+        if action_requests is None:
+            action_requests = interrupt_data.get("action_requests", [])
+
+        # Clear interrupt and set running, but preserve tool_calls and canvas
+        existing_tool_calls = _agent_state.get("tool_calls", []).copy()
+        existing_canvas = _agent_state.get("canvas", []).copy()
+
+        _agent_state["interrupt"] = None
+        _agent_state["running"] = True
+        _agent_state["response"] = ""  # Clear any previous response
+        _agent_state["error"] = None  # Clear any previous error
+        _agent_state["tool_calls"] = existing_tool_calls  # Keep existing tool calls
+        _agent_state["canvas"] = existing_canvas  # Keep canvas
+        _agent_state["last_update"] = time.time()
+
+    # Build decisions list in the format expected by deepagents HITL middleware
+    # Format: {"decisions": [{"type": "approve"}, {"type": "reject", "message": "..."}, ...]}
+    decisions = []
+
+    if action == "approve":
+        # Approve all action requests
+        for _ in action_requests:
+            decisions.append({"type": "approve"})
+        # If no action requests, still add one approve decision
+        if not decisions:
+            decisions.append({"type": "approve"})
+    elif action == "reject":
+        # When user rejects, stop the agent immediately instead of resuming
+        # Set the response to indicate the action was rejected
+        reject_message = decision or "User rejected the action"
+
+        # Get tool info for the rejection message
+        tool_info = ""
+        if action_requests:
+            tool_names = [ar.get("tool", "unknown") for ar in action_requests]
+            tool_info = f" ({', '.join(tool_names)})"
+
+        with _agent_state_lock:
+            _agent_state["running"] = False
+            _agent_state["response"] = f"Action rejected{tool_info}: {reject_message}"
+            _agent_state["last_update"] = time.time()
+
+        return  # Don't resume the agent
+    else:  # edit - provide edited action
+        # For edit, we need to provide the edited tool call
+        # The decision text should contain the edited command/args
+        for action_req in action_requests:
+            tool_name = action_req.get("tool", "")
+
+            # If this is a bash command and user provided new command text
+            if tool_name == "bash" and decision:
+                decisions.append({
+                    "type": "edit",
+                    "edited_action": {
+                        "name": tool_name,
+                        "args": {"command": decision}
+                    }
+                })
+            else:
+                # For other tools or no input, just approve
+                decisions.append({"type": "approve"})
+
+        if not decisions:
+            decisions.append({"type": "approve"})
+
+    # Resume value in deepagents format
+    resume_value = {"decisions": decisions}
+
+    # Start background thread with resume value
+    # Pass a special marker to indicate this is a resume operation
+    thread = threading.Thread(target=_run_agent_stream, args=("__RESUME__", resume_value))
     thread.daemon = True
     thread.start()
 
@@ -370,11 +727,31 @@ app = Dash(
     __name__,
     suppress_callback_exceptions=True,
     title=APP_TITLE,
+    external_stylesheets=dmc.styles.ALL,
+    external_scripts=[
+        "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js",
+    ],
+    assets_folder=str(Path(__file__).parent / "assets"),
 )
 
-# Load HTML template from file
-with open(Path(__file__).parent / "templates" / "index.html", "r") as f:
-    app.index_string = f.read()
+# Custom index string for SVG favicon support
+app.index_string = '''<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+        {%css%}
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>'''
 
 
 # =============================================================================
@@ -405,18 +782,30 @@ app.layout = create_layout
 # Initial message display
 @app.callback(
     Output("chat-messages", "children"),
-    Input("chat-history", "data"),
+    [Input("chat-history", "data")],
+    [State("theme-store", "data")],
     prevent_initial_call=False
 )
-def display_initial_messages(history):
+def display_initial_messages(history, theme):
     """Display initial welcome message or chat history."""
     if not history:
         return []
 
-    messages = [
-        format_message(msg["role"], msg["content"], COLORS, STYLES, is_new=False)
-        for msg in history
-    ]
+    colors = get_colors(theme or "light")
+    messages = []
+    for msg in history:
+        msg_response_time = msg.get("response_time") if msg["role"] == "assistant" else None
+        messages.append(format_message(msg["role"], msg["content"], colors, STYLES, is_new=False, response_time=msg_response_time))
+        # Render tool calls stored with this message
+        if msg.get("tool_calls"):
+            tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
+            if tool_calls_block:
+                messages.append(tool_calls_block)
+        # Render todos stored with this message
+        if msg.get("todos"):
+            todos_block = format_todos_inline(msg["todos"], colors)
+            if todos_block:
+                messages.append(todos_block)
     return messages
 
 # Chat callbacks
@@ -429,20 +818,38 @@ def display_initial_messages(history):
     [Input("send-btn", "n_clicks"),
      Input("chat-input", "n_submit")],
     [State("chat-input", "value"),
-     State("chat-history", "data")],
+     State("chat-history", "data"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def handle_send_immediate(n_clicks, n_submit, message, history):
+def handle_send_immediate(n_clicks, n_submit, message, history, theme):
     """Phase 1: Immediately show user message and start agent."""
     if not message or not message.strip():
         raise PreventUpdate
 
+    colors = get_colors(theme or "light")
     message = message.strip()
     history = history or []
     history.append({"role": "user", "content": message})
 
-    messages = [format_message(m["role"], m["content"], COLORS, STYLES, is_new=(i == len(history)-1)) for i, m in enumerate(history)]
-    messages.append(format_loading(COLORS))
+    # Render all history messages including tool calls and todos
+    messages = []
+    for i, m in enumerate(history):
+        is_new = (i == len(history) - 1)
+        msg_response_time = m.get("response_time") if m["role"] == "assistant" else None
+        messages.append(format_message(m["role"], m["content"], colors, STYLES, is_new=is_new, response_time=msg_response_time))
+        # Render tool calls stored with this message
+        if m.get("tool_calls"):
+            tool_calls_block = format_tool_calls_inline(m["tool_calls"], colors)
+            if tool_calls_block:
+                messages.append(tool_calls_block)
+        # Render todos stored with this message
+        if m.get("todos"):
+            todos_block = format_todos_inline(m["todos"], colors)
+            if todos_block:
+                messages.append(todos_block)
+
+    messages.append(format_loading(colors))
 
     # Start agent in background
     call_agent(message)
@@ -457,63 +864,220 @@ def handle_send_immediate(n_clicks, n_submit, message, history):
      Output("poll-interval", "disabled", allow_duplicate=True)],
     Input("poll-interval", "n_intervals"),
     [State("chat-history", "data"),
-     State("pending-message", "data")],
+     State("pending-message", "data"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def poll_agent_updates(n_intervals, history, pending_message):
-    """Poll for agent updates and display them in real-time."""
+def poll_agent_updates(n_intervals, history, pending_message, theme):
+    """Poll for agent updates and display them in real-time.
+
+    Tool calls are stored in history and persist across turns.
+    History items can be:
+    - {"role": "user", "content": "..."} - user message
+    - {"role": "assistant", "content": "...", "tool_calls": [...]} - assistant message with tool calls
+    """
     state = get_agent_state()
     history = history or []
+    colors = get_colors(theme or "light")
+
+    def render_history_messages(history_items):
+        """Render all history items including tool calls and todos."""
+        messages = []
+        for msg in history_items:
+            msg_response_time = msg.get("response_time") if msg["role"] == "assistant" else None
+            messages.append(format_message(msg["role"], msg["content"], colors, STYLES, response_time=msg_response_time))
+            # Render tool calls stored with this message
+            if msg.get("tool_calls"):
+                tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
+                if tool_calls_block:
+                    messages.append(tool_calls_block)
+            # Render todos stored with this message
+            if msg.get("todos"):
+                todos_block = format_todos_inline(msg["todos"], colors)
+                if todos_block:
+                    messages.append(todos_block)
+        return messages
+
+    # Check for interrupt (human-in-the-loop)
+    if state.get("interrupt"):
+        # Agent is paused waiting for user input
+        messages = render_history_messages(history)
+
+        # Add current turn's thinking/tool_calls/todos before interrupt
+        if state["thinking"]:
+            thinking_block = format_thinking(state["thinking"], colors)
+            if thinking_block:
+                messages.append(thinking_block)
+
+        if state.get("tool_calls"):
+            tool_calls_block = format_tool_calls_inline(state["tool_calls"], colors)
+            if tool_calls_block:
+                messages.append(tool_calls_block)
+
+        if state["todos"]:
+            todos_block = format_todos_inline(state["todos"], colors)
+            if todos_block:
+                messages.append(todos_block)
+
+        # Add interrupt UI
+        interrupt_block = format_interrupt(state["interrupt"], colors)
+        if interrupt_block:
+            messages.append(interrupt_block)
+
+        # Disable polling - wait for user to respond to interrupt
+        return messages, no_update, True
 
     # Check if agent is done
     if not state["running"]:
-        # Agent finished - add response to history
-        if state["response"]:
-            history.append({"role": "assistant", "content": state["response"]})
-        elif state["error"]:
-            history.append({"role": "assistant", "content": f"Error: {state['error']}"})
+        # Calculate response time
+        response_time = None
+        if state.get("start_time"):
+            response_time = time.time() - state["start_time"]
 
-        # Build final messages with inline thinking/todos between user and assistant
+        # Agent finished - store tool calls and todos with the USER message (they appear after user msg)
+        if history:
+            # Find the last user message and attach tool calls and todos to it
+            for i in range(len(history) - 1, -1, -1):
+                if history[i]["role"] == "user":
+                    if state.get("tool_calls"):
+                        history[i]["tool_calls"] = state["tool_calls"]
+                    if state.get("todos"):
+                        history[i]["todos"] = state["todos"]
+                    break
+
+        # Add assistant response to history (with response time)
+        assistant_msg = {
+            "role": "assistant",
+            "content": state["response"] if state["response"] else f"Error: {state['error']}",
+            "response_time": response_time,
+        }
+
+        history.append(assistant_msg)
+
+        # Render all history (tool calls and todos are now part of history)
         final_messages = []
         for i, msg in enumerate(history):
-            final_messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES, is_new=(i >= len(history)-1)))
-
-            # Add thinking/todos after user message, before assistant response
-            if msg["role"] == "user" and i == len(history) - 2:  # Last user message
-                # Add thinking block
-                thinking_block = format_thinking(state["thinking"], COLORS)
-                if thinking_block:
-                    final_messages.append(thinking_block)
-
-                # Add todos block
-                todos_block = format_todos_inline(state["todos"], COLORS)
+            is_new = (i >= len(history) - 1)
+            msg_response_time = msg.get("response_time") if msg["role"] == "assistant" else None
+            final_messages.append(format_message(msg["role"], msg["content"], colors, STYLES, is_new=is_new, response_time=msg_response_time))
+            # Render tool calls stored with this message
+            if msg.get("tool_calls"):
+                tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
+                if tool_calls_block:
+                    final_messages.append(tool_calls_block)
+            # Render todos stored with this message
+            if msg.get("todos"):
+                todos_block = format_todos_inline(msg["todos"], colors)
                 if todos_block:
                     final_messages.append(todos_block)
 
         # Disable polling
         return final_messages, history, True
     else:
-        # Agent still running - show loading with current thinking/todos
-        messages = []
-        for msg in history:
-            messages.append(format_message(msg["role"], msg["content"], COLORS, STYLES))
+        # Agent still running - show loading with current thinking/tool_calls/todos
+        messages = render_history_messages(history)
 
-        # Add current thinking/todos if available
+        # Add current thinking if available
         if state["thinking"]:
-            thinking_block = format_thinking(state["thinking"], COLORS)
+            thinking_block = format_thinking(state["thinking"], colors)
             if thinking_block:
                 messages.append(thinking_block)
 
+        # Add current tool calls if available
+        if state.get("tool_calls"):
+            tool_calls_block = format_tool_calls_inline(state["tool_calls"], colors)
+            if tool_calls_block:
+                messages.append(tool_calls_block)
+
+        # Add current todos if available
         if state["todos"]:
-            todos_block = format_todos_inline(state["todos"], COLORS)
+            todos_block = format_todos_inline(state["todos"], colors)
             if todos_block:
                 messages.append(todos_block)
 
         # Add loading indicator
-        messages.append(format_loading(COLORS))
+        messages.append(format_loading(colors))
 
         # Continue polling
         return messages, no_update, False
+
+
+# Interrupt handling callbacks
+@app.callback(
+    [Output("chat-messages", "children", allow_duplicate=True),
+     Output("poll-interval", "disabled", allow_duplicate=True)],
+    [Input("interrupt-approve-btn", "n_clicks"),
+     Input("interrupt-reject-btn", "n_clicks"),
+     Input("interrupt-edit-btn", "n_clicks")],
+    [State("interrupt-input", "value"),
+     State("chat-history", "data"),
+     State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_value, history, theme):
+    """Handle user response to an interrupt.
+
+    Note: Click parameters are required for Dash callback inputs but we use
+    ctx.triggered to determine which button was clicked.
+    """
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    triggered_value = ctx.triggered[0].get("value")
+
+    # Only proceed if there was an actual click (value > 0)
+    if not triggered_value or triggered_value <= 0:
+        raise PreventUpdate
+
+    colors = get_colors(theme or "light")
+    history = history or []
+
+    # Determine action based on which button was clicked
+    if triggered_id == "interrupt-approve-btn":
+        if not approve_clicks or approve_clicks <= 0:
+            raise PreventUpdate
+        action = "approve"
+        decision = input_value or "approved"
+    elif triggered_id == "interrupt-reject-btn":
+        if not reject_clicks or reject_clicks <= 0:
+            raise PreventUpdate
+        action = "reject"
+        decision = input_value or "rejected"
+    elif triggered_id == "interrupt-edit-btn":
+        if not edit_clicks or edit_clicks <= 0:
+            raise PreventUpdate
+        action = "edit"
+        decision = input_value or ""
+        if not decision:
+            raise PreventUpdate  # Need input for edit action
+    else:
+        raise PreventUpdate
+
+    # Resume the agent with the user's decision
+    resume_agent_from_interrupt(decision, action)
+
+    # Show loading state while agent resumes
+    messages = []
+    for msg in history:
+        msg_response_time = msg.get("response_time") if msg["role"] == "assistant" else None
+        messages.append(format_message(msg["role"], msg["content"], colors, STYLES, response_time=msg_response_time))
+        # Render tool calls stored with this message
+        if msg.get("tool_calls"):
+            tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
+            if tool_calls_block:
+                messages.append(tool_calls_block)
+        # Render todos stored with this message
+        if msg.get("todos"):
+            todos_block = format_todos_inline(msg["todos"], colors)
+            if todos_block:
+                messages.append(todos_block)
+
+    messages.append(format_loading(colors))
+
+    # Re-enable polling
+    return messages, False
 
 
 # Folder toggle callback
@@ -527,15 +1091,17 @@ def poll_agent_updates(n_intervals, history, pending_message):
      State({"type": "folder-icon", "path": ALL}, "id"),
      State({"type": "folder-children", "path": ALL}, "style"),
      State({"type": "folder-icon", "path": ALL}, "style"),
-     State({"type": "folder-children", "path": ALL}, "children")],
+     State({"type": "folder-children", "path": ALL}, "children"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles, icon_styles, children_content):
+def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles, icon_styles, children_content, theme):
     """Toggle folder expansion and lazy load contents if needed."""
     ctx = callback_context
     if not ctx.triggered or not any(n_clicks):
         raise PreventUpdate
 
+    colors = get_colors(theme or "light")
     triggered = ctx.triggered[0]["prop_id"]
     try:
         id_str = triggered.rsplit(".", 1)[0]
@@ -582,7 +1148,7 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
                     # Load folder contents using real path
                     try:
                         folder_items = load_folder_contents(folder_rel_path, WORKSPACE_ROOT)
-                        loaded_content = render_file_tree(folder_items, COLORS, STYLES,
+                        loaded_content = render_file_tree(folder_items, colors, STYLES,
                                                           level=folder_rel_path.count("/") + 1,
                                                           parent_path=folder_rel_path)
                         new_children_content.append(loaded_content if loaded_content else current_content)
@@ -611,7 +1177,7 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
                 new_icon_styles.append({
                     "marginRight": "8px",
                     "fontSize": "10px",
-                    "color": COLORS["text_muted"],
+                    "color": colors["text_muted"],
                     "transition": "transform 0.2s",
                     "display": "inline-block",
                     "transform": "rotate(0deg)" if is_expanded else "rotate(90deg)",
@@ -633,62 +1199,64 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
      Output("file-click-tracker", "data")],
     Input({"type": "file-item", "path": ALL}, "n_clicks"),
     [State({"type": "file-item", "path": ALL}, "id"),
-     State("file-click-tracker", "data")],
+     State("file-click-tracker", "data"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def open_file_modal(all_n_clicks, all_ids, click_tracker):
+def open_file_modal(all_n_clicks, all_ids, click_tracker, theme):
     """Open file in modal - only on actual new clicks."""
     ctx = callback_context
-    
+
     if not ctx.triggered_id:
         raise PreventUpdate
-    
+
     # ctx.triggered_id is the dict {"type": "file-item", "path": "..."}
     if not isinstance(ctx.triggered_id, dict):
         raise PreventUpdate
-        
+
     if ctx.triggered_id.get("type") != "file-item":
         raise PreventUpdate
-    
+
     file_path = ctx.triggered_id.get("path")
     if not file_path:
         raise PreventUpdate
-    
+
     # Find the index of the triggered item to get its click count
     clicked_idx = None
     for i, item_id in enumerate(all_ids):
         if item_id.get("path") == file_path:
             clicked_idx = i
             break
-    
+
     if clicked_idx is None:
         raise PreventUpdate
-    
+
     # Get current click count for this file
     current_clicks = all_n_clicks[clicked_idx] if clicked_idx < len(all_n_clicks) else None
-    
+
     # Must be an actual click (not None, not 0)
     if not current_clicks:
         raise PreventUpdate
-    
+
     # Check if this is a NEW click vs a re-render with existing clicks
     click_tracker = click_tracker or {}
     prev_clicks = click_tracker.get(file_path, 0)
-    
+
     # Update tracker regardless of whether we open modal
     new_tracker = click_tracker.copy()
     new_tracker[file_path] = current_clicks
-    
+
     if current_clicks <= prev_clicks:
         # Not a new click - component was re-rendered or this click was already processed
         # Still need to return updated tracker to avoid stale state
         raise PreventUpdate
-    
+
     # Verify file exists and is a file
     full_path = WORKSPACE_ROOT / file_path
     if not full_path.exists() or not full_path.is_file():
         raise PreventUpdate
 
+    colors = get_colors(theme or "light")
     content, is_text, error = read_file_content(WORKSPACE_ROOT, file_path)
     filename = Path(file_path).name
 
@@ -696,7 +1264,7 @@ def open_file_modal(all_n_clicks, all_ids, click_tracker):
         modal_content = html.Pre(
             content,
             style={
-                "background": COLORS["bg_tertiary"],
+                "background": colors["bg_tertiary"],
                 "padding": "16px",
                 "fontSize": "12px",
                 "fontFamily": "'IBM Plex Mono', monospace",
@@ -705,83 +1273,24 @@ def open_file_modal(all_n_clicks, all_ids, click_tracker):
                 "whiteSpace": "pre-wrap",
                 "wordBreak": "break-word",
                 "margin": "0",
+                "color": colors["text_primary"],
             }
         )
     else:
         modal_content = html.Div([
             html.P(error or "Cannot display file", style={
-                "color": COLORS["text_muted"],
+                "color": colors["text_muted"],
                 "textAlign": "center",
                 "padding": "40px",
             }),
             html.P("Click Download to save the file.", style={
-                "color": COLORS["text_muted"],
+                "color": colors["text_muted"],
                 "textAlign": "center",
                 "fontSize": "13px",
             })
         ])
 
     return True, filename, modal_content, file_path, new_tracker
-    """Open file in modal."""
-    ctx = callback_context
-    
-    if not ctx.triggered_id:
-        raise PreventUpdate
-    
-    # ctx.triggered_id is the dict {"type": "file-item", "path": "..."}
-    if not isinstance(ctx.triggered_id, dict):
-        raise PreventUpdate
-        
-    if ctx.triggered_id.get("type") != "file-item":
-        raise PreventUpdate
-    
-    file_path = ctx.triggered_id.get("path")
-    if not file_path:
-        raise PreventUpdate
-    
-    # Get the actual click value from triggered
-    triggered_value = ctx.triggered[0]["value"]
-    if not triggered_value:  # None or 0
-        raise PreventUpdate
-    
-    # Verify file exists and is a file
-    full_path = WORKSPACE_ROOT / file_path
-    if not full_path.exists() or not full_path.is_file():
-        raise PreventUpdate
-
-    content, is_text, error = read_file_content(WORKSPACE_ROOT, file_path)
-    filename = Path(file_path).name
-
-    if is_text and content:
-        modal_content = html.Pre(
-            content,
-            style={
-                "background": COLORS["bg_tertiary"],
-                "padding": "16px",
-                "fontSize": "12px",
-                "fontFamily": "'IBM Plex Mono', monospace",
-                "overflow": "auto",
-                "maxHeight": "60vh",
-                "whiteSpace": "pre-wrap",
-                "wordBreak": "break-word",
-                "margin": "0",
-            }
-        )
-    else:
-        modal_content = html.Div([
-            html.P(error or "Cannot display file", style={
-                "color": COLORS["text_muted"],
-                "textAlign": "center",
-                "padding": "40px",
-            }),
-            html.P("Click Download to save the file.", style={
-                "color": COLORS["text_muted"],
-                "textAlign": "center",
-                "fontSize": "13px",
-            })
-        ])
-
-    return True, filename, modal_content, file_path
 
 # Modal download button
 @app.callback(
@@ -850,15 +1359,33 @@ def open_terminal(n_clicks):
     raise PreventUpdate
 
 
-# Refresh file tree
+# Refresh both file tree and canvas content
 @app.callback(
-    Output("file-tree", "children"),
+    [Output("file-tree", "children"),
+     Output("canvas-content", "children", allow_duplicate=True)],
     Input("refresh-btn", "n_clicks"),
+    [State("theme-store", "data")],
     prevent_initial_call=True
 )
-def refresh_tree(n_clicks):
-    """Refresh file tree."""
-    return render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), COLORS, STYLES)
+def refresh_sidebar(n_clicks, theme):
+    """Refresh both file tree and canvas content."""
+    global _agent_state
+    colors = get_colors(theme or "light")
+
+    # Refresh file tree
+    file_tree = render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
+
+    # Refresh canvas by reloading from .canvas/canvas.md file
+    canvas_items = load_canvas_from_markdown(WORKSPACE_ROOT)
+
+    # Update agent state with reloaded canvas
+    with _agent_state_lock:
+        _agent_state["canvas"] = canvas_items
+
+    # Render the canvas items
+    canvas_content = render_canvas_items(canvas_items, colors)
+
+    return file_tree, canvas_content
 
 
 # File upload
@@ -866,14 +1393,16 @@ def refresh_tree(n_clicks):
     [Output("upload-status", "children"),
      Output("file-tree", "children", allow_duplicate=True)],
     Input("file-upload", "contents"),
-    State("file-upload", "filename"),
+    [State("file-upload", "filename"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def handle_upload(contents, filenames):
+def handle_upload(contents, filenames, theme):
     """Handle file uploads."""
     if not contents:
         raise PreventUpdate
-    
+
+    colors = get_colors(theme or "light")
     uploaded = []
     for content, filename in zip(contents, filenames):
         try:
@@ -887,102 +1416,56 @@ def handle_upload(contents, filenames):
             uploaded.append(filename)
         except Exception as e:
             print(f"Upload error: {e}")
-    
+
     if uploaded:
-        return f"Uploaded: {', '.join(uploaded)}", render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), COLORS, STYLES)
+        return f"Uploaded: {', '.join(uploaded)}", render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
     return "Upload failed", no_update
 
 
-# View toggle callbacks
+# View toggle callbacks - using SegmentedControl
 @app.callback(
     [Output("files-view", "style"),
      Output("canvas-view", "style"),
-     Output("view-files-btn", "style"),
-     Output("view-canvas-btn", "style"),
-     Output("files-actions", "style")],
-    [Input("view-files-btn", "n_clicks"),
-     Input("view-canvas-btn", "n_clicks")],
+     Output("open-terminal-btn", "style")],
+    [Input("sidebar-view-toggle", "value")],
     prevent_initial_call=True
 )
-def toggle_view(files_clicks, canvas_clicks):
-    """Toggle between files and canvas view."""
-    ctx = callback_context
-    if not ctx.triggered:
+def toggle_view(view_value):
+    """Toggle between files and canvas view using SegmentedControl."""
+    if not view_value:
         raise PreventUpdate
 
-    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
-
-    if button_id == "view-canvas-btn":
-        # Show canvas, hide files
+    if view_value == "canvas":
+        # Show canvas, hide files, hide terminal button (not relevant for canvas)
         return (
             {"flex": "1", "display": "none", "flexDirection": "column"},
             {
                 "flex": "1",
-                "minHeight": "0",  # Critical for flex overflow
+                "minHeight": "0",
                 "display": "flex",
                 "flexDirection": "column",
-                "overflow": "hidden"  # Prevent overflow from this container
+                "overflow": "hidden"
             },
-            {
-                "background": COLORS["bg_secondary"],
-                "color": COLORS["text_secondary"],
-                "border": "none",
-                "fontSize": "13px",
-                "fontWeight": "500",
-                "cursor": "pointer",
-                "padding": "6px 12px",
-                "borderRadius": "4px 0 0 4px",
-            },
-            {
-                "background": COLORS["accent"],
-                "color": "#ffffff",
-                "border": "none",
-                "fontSize": "13px",
-                "fontWeight": "500",
-                "cursor": "pointer",
-                "padding": "6px 12px",
-                "borderRadius": "0 4px 4px 0",
-            },
-            {"display": "none"}
+            {"display": "none"}  # Hide terminal button on canvas view
         )
     else:
-        # Show files, hide canvas
+        # Show files, hide canvas, show terminal button
         return (
             {
                 "flex": "1",
-                "minHeight": "0",  # Critical for flex overflow
+                "minHeight": "0",
                 "display": "flex",
                 "flexDirection": "column",
-                "padding-bottom": "5%"  # Bottom padding for spacing
+                "paddingBottom": "5%"
             },
             {
                 "flex": "1",
-                "minHeight": "0",  # Critical for flex overflow
+                "minHeight": "0",
                 "display": "none",
                 "flexDirection": "column",
-                "overflow": "hidden"  # Prevent overflow from this container
+                "overflow": "hidden"
             },
-            {
-                "background": COLORS["accent"],
-                "color": "#ffffff",
-                "border": "none",
-                "fontSize": "13px",
-                "fontWeight": "500",
-                "cursor": "pointer",
-                "padding": "6px 12px",
-                "borderRadius": "4px 0 0 4px",
-            },
-            {
-                "background": COLORS["bg_secondary"],
-                "color": COLORS["text_secondary"],
-                "border": "none",
-                "fontSize": "13px",
-                "fontWeight": "500",
-                "cursor": "pointer",
-                "padding": "6px 12px",
-                "borderRadius": "0 4px 4px 0",
-            },
-            {"display": "flex", "alignItems": "center"}
+            {}  # Show terminal button (default styles)
         )
 
 
@@ -990,16 +1473,18 @@ def toggle_view(files_clicks, canvas_clicks):
 @app.callback(
     Output("canvas-content", "children"),
     [Input("poll-interval", "n_intervals"),
-     Input("view-canvas-btn", "n_clicks")],
+     Input("sidebar-view-toggle", "value")],
+    [State("theme-store", "data")],
     prevent_initial_call=False
 )
-def update_canvas_content(n_intervals, canvas_clicks):
+def update_canvas_content(n_intervals, view_value, theme):
     """Update canvas content from agent state."""
     state = get_agent_state()
     canvas_items = state.get("canvas", [])
+    colors = get_colors(theme or "light")
 
     # Use imported rendering function
-    return render_canvas_items(canvas_items, COLORS)
+    return render_canvas_items(canvas_items, colors)
 
 
 
@@ -1007,28 +1492,20 @@ def update_canvas_content(n_intervals, canvas_clicks):
 @app.callback(
     Output("canvas-content", "children", allow_duplicate=True),
     Input("clear-canvas-btn", "n_clicks"),
+    [State("theme-store", "data")],
     prevent_initial_call=True
 )
-def clear_canvas(n_clicks):
-    """Clear the canvas and archive the current canvas.md with a timestamp."""
+def clear_canvas(n_clicks, theme):
+    """Clear the canvas and archive the .canvas folder with a timestamp."""
     if not n_clicks:
         raise PreventUpdate
 
     global _agent_state
+    colors = get_colors(theme or "light")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Archive existing canvas.md file if it exists
-    canvas_file = WORKSPACE_ROOT / "canvas.md"
-    if canvas_file.exists():
-        try:
-            archive_path = WORKSPACE_ROOT / f"canvas_{timestamp}.md"
-            canvas_file.rename(archive_path)
-            print(f"Archived canvas to {archive_path}")
-        except Exception as e:
-            print(f"Failed to archive canvas.md: {e}")
-
-    # Archive .canvas folder if it exists
+    # Archive .canvas folder if it exists (contains canvas.md and all assets)
     canvas_dir = WORKSPACE_ROOT / ".canvas"
     if canvas_dir.exists() and canvas_dir.is_dir():
         try:
@@ -1052,12 +1529,12 @@ def clear_canvas(n_clicks):
         }),
         html.P("Canvas is empty", style={
             "textAlign": "center",
-            "color": COLORS["text_muted"],
+            "color": colors["text_muted"],
             "fontSize": "14px"
         }),
         html.P("The agent will add visualizations, charts, and notes here", style={
             "textAlign": "center",
-            "color": COLORS["text_muted"],
+            "color": colors["text_muted"],
             "fontSize": "12px",
             "marginTop": "8px"
         })
@@ -1069,6 +1546,55 @@ def clear_canvas(n_clicks):
         "height": "100%",
         "padding": "40px"
     })
+
+
+# =============================================================================
+# THEME TOGGLE CALLBACK - Using DMC 2.4 forceColorScheme
+# =============================================================================
+
+@app.callback(
+    [Output("theme-store", "data"),
+     Output("mantine-provider", "forceColorScheme"),
+     Output("theme-toggle-btn", "children")],
+    [Input("theme-toggle-btn", "n_clicks")],
+    [State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def toggle_theme(n_clicks, current_theme):
+    """Toggle between light and dark theme using DMC's forceColorScheme."""
+    if not n_clicks:
+        raise PreventUpdate
+
+    # Toggle theme
+    new_theme = "dark" if current_theme == "light" else "light"
+
+    # Update the icon
+    toggle_icon = DashIconify(
+        icon="radix-icons:sun" if new_theme == "dark" else "radix-icons:moon",
+        width=18
+    )
+
+    return new_theme, new_theme, toggle_icon
+
+
+# Callback to initialize theme on page load
+@app.callback(
+    [Output("mantine-provider", "forceColorScheme", allow_duplicate=True),
+     Output("theme-toggle-btn", "children", allow_duplicate=True)],
+    [Input("theme-store", "data")],
+    prevent_initial_call='initial_duplicate'
+)
+def initialize_theme(theme):
+    """Initialize theme on page load from stored preference."""
+    if not theme:
+        theme = "light"
+
+    toggle_icon = DashIconify(
+        icon="radix-icons:sun" if theme == "dark" else "radix-icons:moon",
+        width=18
+    )
+
+    return theme, toggle_icon
 
 
 # =============================================================================
@@ -1108,7 +1634,7 @@ def run_app(
 
     Examples:
         >>> # Using agent instance directly
-        >>> from deepagent_dash import run_app
+        >>> from cowork_dash import run_app
         >>> my_agent = MyAgent()
         >>> run_app(my_agent, workspace="~/my-workspace")
 

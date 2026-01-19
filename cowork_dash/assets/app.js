@@ -1,3 +1,48 @@
+// Theme handling - sync mermaid with DMC color scheme
+(function initTheme() {
+    function updateMermaidTheme(theme) {
+        if (typeof mermaid !== 'undefined') {
+            mermaid.initialize({
+                startOnLoad: false,
+                theme: theme === 'dark' ? 'dark' : 'default',
+                securityLevel: 'loose',
+                logLevel: 'error'
+            });
+            // Re-render any existing mermaid diagrams
+            renderMermaid();
+        }
+    }
+
+    // Watch for DMC color scheme changes via MutationObserver
+    function watchColorScheme() {
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'data-mantine-color-scheme') {
+                    const scheme = document.documentElement.getAttribute('data-mantine-color-scheme');
+                    updateMermaidTheme(scheme);
+                }
+            });
+        });
+
+        observer.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ['data-mantine-color-scheme']
+        });
+
+        // Initial theme check
+        const initialScheme = document.documentElement.getAttribute('data-mantine-color-scheme');
+        if (initialScheme) {
+            updateMermaidTheme(initialScheme);
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', watchColorScheme);
+    } else {
+        watchColorScheme();
+    }
+})();
+
 // Initialize Mermaid
 mermaid.initialize({
     startOnLoad: false,
@@ -46,14 +91,59 @@ if (typeof window.mermaidObserver === 'undefined') {
         renderMermaid();
     });
 
-    // Start observing once the canvas is available
-    setTimeout(function() {
+    // Start observing once the canvas is available - retry until found
+    function attachMermaidObserver() {
         const canvasContent = document.getElementById('canvas-content');
         if (canvasContent) {
             window.mermaidObserver.observe(canvasContent, { childList: true, subtree: true });
+            console.log('Mermaid observer attached to canvas-content');
+            // Run initial render in case content is already there
+            renderMermaid();
+        } else {
+            // Retry after a short delay
+            setTimeout(attachMermaidObserver, 500);
         }
-    }, 1000);
+    }
+    attachMermaidObserver();
 }
+
+// Auto-scroll chat messages to bottom
+(function initChatAutoScroll() {
+    let chatMessages = null;
+
+    function scrollToBottom() {
+        if (chatMessages) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    }
+
+    function setupAutoScroll() {
+        chatMessages = document.getElementById('chat-messages');
+        if (!chatMessages) {
+            setTimeout(setupAutoScroll, 500);
+            return;
+        }
+
+        // Watch for changes to chat messages
+        const observer = new MutationObserver(function(mutations) {
+            // Small delay to ensure DOM is updated
+            setTimeout(scrollToBottom, 50);
+        });
+
+        observer.observe(chatMessages, {
+            childList: true,
+            subtree: true
+        });
+
+        console.log('Chat auto-scroll initialized');
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupAutoScroll);
+    } else {
+        setupAutoScroll();
+    }
+})();
 
 // Resizable split pane - improved reliability
 (function initResizablePanes() {

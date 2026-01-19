@@ -3,18 +3,18 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "deepagent-dash"
+name = "cowork-dash"
 version = "0.1.1"
 description = "AI Agent Web Interface with Filesystem and Canvas Visualization"
 readme = "README.md"
 requires-python = ">=3.11"
 # Make the package easily runnable with uvx
-# Usage: uvx deepagent-dash run --workspace ~/my-workspace
+# Usage: uvx cowork-dash run --workspace ~/my-workspace
 license = {text = "MIT"}
 authors = [
     {name = "Kedar Dabhadkar", email = "kdabhadk@gmail.com"}
 ]
-keywords = ["ai", "agent", "dashboard", "visualization", "deepagent", "dash", "plotly"]
+keywords = ["ai", "agent", "dashboard", "visualization", "cowork", "dash", "plotly"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -31,6 +31,7 @@ classifiers = [
 dependencies = [
     "dash>=2.0.0",
     "dash-mantine-components>=0.14.0",
+    "dash-iconify>=0.1.2",
     "plotly>=5.0.0",
     "pandas>=1.3.0",
     "matplotlib>=3.5.0",
@@ -49,22 +50,28 @@ dev = [
     "mypy>=0.950",
 ]
 
+# IPython for enhanced code execution (optional but recommended)
+ipython = [
+    "ipython>=8.0.0",
+]
+
 # All optional dependencies
 all = [
-    "deepagent-dash[dev]",
+    "cowork-dash[dev]",
+    "cowork-dash[ipython]",
 ]
 
 [project.urls]
-Homepage = "https://github.com/dkedar7/deepagent-dash"
-Documentation = "https://github.com/dkedar7/deepagent-dash/blob/main/README.md"
-Repository = "https://github.com/dkedar7/deepagent-dash"
-"Bug Tracker" = "https://github.com/dkedar7/deepagent-dash/issues"
+Homepage = "https://github.com/dkedar7/cowork-dash"
+Documentation = "https://github.com/dkedar7/cowork-dash/blob/main/README.md"
+Repository = "https://github.com/dkedar7/cowork-dash"
+"Bug Tracker" = "https://github.com/dkedar7/cowork-dash/issues"
 
 [project.scripts]
-deepagent-dash = "deepagent_dash.cli:main"
+cowork-dash = "cowork_dash.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["deepagent_dash"]
+packages = ["cowork_dash"]
 
 [tool.black]
 line-length = 100

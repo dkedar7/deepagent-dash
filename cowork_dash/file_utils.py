@@ -81,9 +81,9 @@ def load_folder_contents(folder_path: str, workspace_root: Path) -> List[Dict]:
 
 
 def render_file_tree(items: List[Dict], colors: Dict, styles: Dict, level: int = 0, parent_path: str = "") -> List:
-    """Render file tree with collapsible folders."""
+    """Render file tree with collapsible folders using CSS classes for theming."""
     components = []
-    indent = level * 20
+    indent = level * 15  # Scaled up indent
 
     for item in items:
         if item["type"] == "folder":
@@ -96,32 +96,30 @@ def render_file_tree(items: List[Dict], colors: Dict, styles: Dict, level: int =
                     html.Span(
                         "▶",
                         id={"type": "folder-icon", "path": folder_id},
+                        className="folder-icon",
                         style={
-                            "marginRight": "8px",
+                            "marginRight": "5px",
                             "fontSize": "10px",
-                            "color": colors["text_muted"],
-                            "transition": "transform 0.2s",
+                            "transition": "transform 0.15s",
                             "display": "inline-block",
                         }
                     ),
-                    html.Span(item["name"], style={
+                    html.Span(item["name"], className="folder-name", style={
                         "fontWeight": "500",
-                        "color": colors["text_primary"],
-                        "fontSize": "13px",
+                        "fontSize": "14px",
                     })
                 ],
                 id={"type": "folder-header", "path": folder_id},
                 **{"data-realpath": item["path"]},  # Store actual path for lazy loading
+                className="folder-header file-tree-item",
                 style={
                     "display": "flex",
                     "alignItems": "center",
-                    "padding": "8px 12px",
-                    "paddingLeft": f"{12 + indent}px",
+                    "padding": "5px 10px",
+                    "paddingLeft": f"{10 + indent}px",
                     "cursor": "pointer",
-                    "borderBottom": f"1px solid {colors['border_light']}",
                     "userSelect": "none",
                 },
-                className="folder-header"
                 )
             )
 
@@ -135,11 +133,10 @@ def render_file_tree(items: List[Dict], colors: Dict, styles: Dict, level: int =
             elif not has_children:
                 # Folder is known to be empty
                 child_content = [
-                    html.Div("(empty)", style={
-                        "padding": "8px 12px",
-                        "paddingLeft": f"{32 + (level + 1) * 20}px",
+                    html.Div("(empty)", className="file-tree-empty", style={
+                        "padding": "4px 10px",
+                        "paddingLeft": f"{25 + (level + 1) * 15}px",
                         "fontSize": "12px",
-                        "color": colors["text_muted"],
                         "fontStyle": "italic",
                     })
                 ]
@@ -148,11 +145,11 @@ def render_file_tree(items: List[Dict], colors: Dict, styles: Dict, level: int =
                 child_content = [
                     html.Div("Loading...",
                         id={"type": "folder-loading", "path": folder_id},
+                        className="file-tree-loading",
                         style={
-                            "padding": "8px 12px",
-                            "paddingLeft": f"{32 + (level + 1) * 20}px",
+                            "padding": "4px 10px",
+                            "paddingLeft": f"{25 + (level + 1) * 15}px",
                             "fontSize": "12px",
-                            "color": colors["text_muted"],
                             "fontStyle": "italic",
                         }
                     )
@@ -171,16 +168,13 @@ def render_file_tree(items: List[Dict], colors: Dict, styles: Dict, level: int =
                 html.Div(
                     item["name"],
                     id={"type": "file-item", "path": item["path"]},
+                    className="file-item file-tree-item",
                     style={
-                        "color": colors["text_secondary"],
-                        "fontSize": "13px",
-                        "padding": "8px 12px",
-                        "paddingLeft": f"{32 + indent}px",
+                        "fontSize": "14px",
+                        "padding": "5px 10px",
+                        "paddingLeft": f"{25 + indent}px",
                         "cursor": "pointer",
-                        "borderBottom": f"1px solid {colors['border_light']}",
-                        "transition": styles["transition"],
                     },
-                    className="file-item",
                     **{"data-viewable": "true" if item["viewable"] else "false"}
                 )
             )

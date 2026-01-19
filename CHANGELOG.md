@@ -42,12 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File Browser with interactive file tree and lazy loading
 - Canvas for visualizing DataFrames, Plotly/Matplotlib charts, Mermaid diagrams, images
 - Flexible configuration via config.py
-- CLI interface with `deepagent-dash` command
+- CLI interface with `cowork-dash` command
 - Python API with `run_app()` function
 - Support for custom agents via agent specification
 - Manual mode (file browser only, no agent)
 - Resizable split-pane interface
 - Upload/download functionality for files
 
-[0.1.1]: https://github.com/dkedar7/deepagent-dash/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/dkedar7/deepagent-dash/releases/tag/v0.1.0
+[0.1.1]: https://github.com/dkedar7/cowork-dash/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/dkedar7/cowork-dash/releases/tag/v0.1.0

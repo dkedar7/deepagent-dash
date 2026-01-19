@@ -1,5 +1,5 @@
 """
-Configuration file for DeepAgent Dash.
+Configuration file for Cowork Dash.
 
 This file is OPTIONAL and provides sensible defaults. You typically don't need to edit it.
 
@@ -13,10 +13,10 @@ For most use cases, prefer environment variables or CLI arguments:
   # Using environment variables (recommended for deployment)
   export DEEPAGENT_WORKSPACE_ROOT=/my/project
   export DEEPAGENT_PORT=9000
-  deepagent-dash run
+  cowork-dash run
 
   # Using CLI arguments (recommended for development)
-  deepagent-dash run --workspace /my/project --port 9000
+  cowork-dash run --workspace /my/project --port 9000
 
 Only edit this file if you want to set project-specific defaults that apply
 when no environment variables or CLI arguments are provided.
@@ -54,16 +54,17 @@ _workspace_path = get_config("workspace_root", default="./")
 WORKSPACE_ROOT = Path(_workspace_path).resolve() if _workspace_path else Path("./").resolve()
 
 # Agent specification (format: "module_path:variable_name")
-# Environment variable: DEEPAGENT_AGENT_SPEC
+# Environment variable: DEEPAGENT_SPEC (or DEEPAGENT_AGENT_SPEC for backwards compatibility)
 # CLI argument: --agent
 # Default: None (manual mode, no agent)
 # Example: "mymodule:agent" or "/path/to/agent.py:my_agent"
-AGENT_SPEC = get_config("agent_spec", default=None)
+_default_agent = str(Path(__file__).parent / "agent.py") + ":agent"
+AGENT_SPEC = get_config("spec", default=None) or get_config("agent_spec", default=None) or _default_agent
 
 # Application title
 # Environment variable: DEEPAGENT_APP_TITLE
 # CLI argument: --title
-APP_TITLE = get_config("app_title", default="DeepAgent Dash")
+APP_TITLE = get_config("app_title", default="Cowork Dash")
 
 # Application subtitle
 # Environment variable: DEEPAGENT_APP_SUBTITLE
