@@ -252,7 +252,8 @@ _agent_state = {
     "response": "",
     "error": None,
     "interrupt": None,  # Track interrupt requests for human-in-the-loop
-    "last_update": time.time()
+    "last_update": time.time(),
+    "start_time": None,  # Track when agent started for response time calculation
 }
 _agent_state_lock = threading.Lock()
 
@@ -615,7 +616,8 @@ def call_agent(message: str, resume_data: Dict = None):
             "response": "",
             "error": None,
             "interrupt": None,  # Clear any previous interrupt
-            "last_update": time.time()
+            "last_update": time.time(),
+            "start_time": time.time(),  # Track when agent started
         })
 
     # Start background thread
@@ -773,7 +775,8 @@ def display_initial_messages(history, theme):
     colors = get_colors(theme or "light")
     messages = []
     for msg in history:
-        messages.append(format_message(msg["role"], msg["content"], colors, STYLES, is_new=False))
+        msg_response_time = msg.get("response_time") if msg["role"] == "assistant" else None
+        messages.append(format_message(msg["role"], msg["content"], colors, STYLES, is_new=False, response_time=msg_response_time))
         # Render tool calls stored with this message
         if msg.get("tool_calls"):
             tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
@@ -809,7 +812,8 @@ def handle_send_immediate(n_clicks, n_submit, message, history, theme):
     messages = []
     for i, m in enumerate(history):
         is_new = (i == len(history) - 1)
-        messages.append(format_message(m["role"], m["content"], colors, STYLES, is_new=is_new))
+        msg_response_time = m.get("response_time") if m["role"] == "assistant" else None
+        messages.append(format_message(m["role"], m["content"], colors, STYLES, is_new=is_new, response_time=msg_response_time))
         # Render tool calls stored with this message
         if m.get("tool_calls"):
             tool_calls_block = format_tool_calls_inline(m["tool_calls"], colors)
@@ -851,7 +855,8 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
         """Render all history items including tool calls."""
         messages = []
         for msg in history_items:
-            messages.append(format_message(msg["role"], msg["content"], colors, STYLES))
+            msg_response_time = msg.get("response_time") if msg["role"] == "assistant" else None
+            messages.append(format_message(msg["role"], msg["content"], colors, STYLES, response_time=msg_response_time))
             # Render tool calls stored with this message
             if msg.get("tool_calls"):
                 tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
@@ -890,6 +895,11 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
 
     # Check if agent is done
     if not state["running"]:
+        # Calculate response time
+        response_time = None
+        if state.get("start_time"):
+            response_time = time.time() - state["start_time"]
+
         # Agent finished - store tool calls with the USER message (they appear after user msg)
         if state.get("tool_calls") and history:
             # Find the last user message and attach tool calls to it
@@ -898,10 +908,11 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
                     history[i]["tool_calls"] = state["tool_calls"]
                     break
 
-        # Add assistant response to history (without tool calls)
+        # Add assistant response to history (with response time)
         assistant_msg = {
             "role": "assistant",
-            "content": state["response"] if state["response"] else f"Error: {state['error']}"
+            "content": state["response"] if state["response"] else f"Error: {state['error']}",
+            "response_time": response_time,
         }
 
         history.append(assistant_msg)
@@ -910,7 +921,8 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
         final_messages = []
         for i, msg in enumerate(history):
             is_new = (i >= len(history) - 1)
-            final_messages.append(format_message(msg["role"], msg["content"], colors, STYLES, is_new=is_new))
+            msg_response_time = msg.get("response_time") if msg["role"] == "assistant" else None
+            final_messages.append(format_message(msg["role"], msg["content"], colors, STYLES, is_new=is_new, response_time=msg_response_time))
             # Render tool calls stored with this message
             if msg.get("tool_calls"):
                 tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
@@ -1007,7 +1019,8 @@ def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_
     # Show loading state while agent resumes
     messages = []
     for msg in history:
-        messages.append(format_message(msg["role"], msg["content"], colors, STYLES))
+        msg_response_time = msg.get("response_time") if msg["role"] == "assistant" else None
+        messages.append(format_message(msg["role"], msg["content"], colors, STYLES, response_time=msg_response_time))
         # Render tool calls stored with this message
         if msg.get("tool_calls"):
             tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
