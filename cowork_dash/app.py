@@ -728,11 +728,30 @@ app = Dash(
     suppress_callback_exceptions=True,
     title=APP_TITLE,
     external_stylesheets=dmc.styles.ALL,
+    external_scripts=[
+        "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js",
+    ],
+    assets_folder=str(Path(__file__).parent / "assets"),
 )
 
-# Load HTML template from file
-with open(Path(__file__).parent / "templates" / "index.html", "r") as f:
-    app.index_string = f.read()
+# Custom index string for SVG favicon support
+app.index_string = '''<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+        {%css%}
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>'''
 
 
 # =============================================================================

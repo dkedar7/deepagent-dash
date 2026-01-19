@@ -474,13 +474,10 @@ def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
         elif item_type == "dataframe":
             rendered_items.append(
                 html.Div([
-                    html.Div(
+                    dcc.Markdown(
+                        item.get("html", ""),
                         dangerously_allow_html=True,
-                        children=dcc.Markdown(
-                            item.get("html", ""),
-                            dangerously_allow_html=True,
-                            style={"fontSize": "14px"}
-                        )
+                        style={"fontSize": "14px"}
                     )
                 ], className="canvas-item canvas-item-dataframe", style={
                     "overflowX": "auto",
