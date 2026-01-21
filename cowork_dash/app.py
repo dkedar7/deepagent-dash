@@ -794,10 +794,14 @@ app.index_string = '''<!DOCTYPE html>
 
 def create_layout():
     """Create the app layout with current configuration."""
+    # Use agent's name/description if available, otherwise fall back to config
+    title = getattr(agent, 'name', None) or APP_TITLE
+    subtitle = getattr(agent, 'description', None) or APP_SUBTITLE
+
     return create_layout_component(
         workspace_root=WORKSPACE_ROOT,
-        app_title=APP_TITLE,
-        app_subtitle=APP_SUBTITLE,
+        app_title=title,
+        app_subtitle=subtitle,
         colors=COLORS,
         styles=STYLES,
         agent=agent

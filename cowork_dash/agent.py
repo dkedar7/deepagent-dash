@@ -96,6 +96,7 @@ backend = FilesystemBackend(root_dir=str("./"), virtual_mode=True)
 
 agent = create_deep_agent(
     system_prompt=SYSTEM_PROMPT,
+    name="My agent",
     backend=backend,
     tools=[
         add_to_canvas,
@@ -115,3 +116,4 @@ agent = create_deep_agent(
     # interrupt_on=dict(bash=True),
     checkpointer=InMemorySaver()
 )
+agent.description = "An AI assistant that can manage files and execute Python code interactively."
