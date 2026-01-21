@@ -96,6 +96,7 @@ backend = FilesystemBackend(root_dir=str("./"), virtual_mode=True)
 
 agent = create_deep_agent(
     system_prompt=SYSTEM_PROMPT,
+    name="Cowork Dash",
     backend=backend,
     tools=[
         add_to_canvas,
