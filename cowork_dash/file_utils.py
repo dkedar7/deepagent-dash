@@ -90,24 +90,35 @@ def render_file_tree(items: List[Dict], colors: Dict, styles: Dict, level: int =
             folder_id = item["path"].replace("/", "_").replace("\\", "_")
             children = item.get("children", [])
 
-            # Folder header (clickable to expand/collapse)
+            # Folder header with expand icon and selectable name
             components.append(
                 html.Div([
+                    # Expand/collapse icon (left side)
                     html.Span(
                         "▶",
                         id={"type": "folder-icon", "path": folder_id},
-                        className="folder-icon",
+                        className="folder-icon folder-expand-toggle",
                         style={
                             "marginRight": "5px",
                             "fontSize": "10px",
                             "transition": "transform 0.15s",
                             "display": "inline-block",
+                            "padding": "2px",
                         }
                     ),
-                    html.Span(item["name"], className="folder-name", style={
-                        "fontWeight": "500",
-                        "fontSize": "14px",
-                    })
+                    # Folder name (clickable for selection)
+                    html.Span(item["name"],
+                        id={"type": "folder-select", "path": folder_id},
+                        className="folder-name folder-select-target",
+                        **{"data-folderpath": item["path"]},
+                        style={
+                            "fontWeight": "500",
+                            "fontSize": "14px",
+                            "flex": "1",
+                            "padding": "2px 4px",
+                            "borderRadius": "3px",
+                        }
+                    )
                 ],
                 id={"type": "folder-header", "path": folder_id},
                 **{"data-realpath": item["path"]},  # Store actual path for lazy loading

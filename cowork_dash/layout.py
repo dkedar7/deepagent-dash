@@ -43,6 +43,7 @@ Let's get started!"""
             dcc.Store(id="file-to-view", data=None),
             dcc.Store(id="file-click-tracker", data={}),
             dcc.Store(id="theme-store", data="light", storage_type="local"),
+            dcc.Store(id="selected-folder", data=""),  # Empty string = workspace root
             dcc.Download(id="file-download"),
 
             # Interval for polling agent updates (disabled by default)
@@ -64,6 +65,27 @@ Let's get started!"""
                             style={"marginTop": "16px"}
                         )
                     ], style={"textAlign": "right"})
+                ],
+                opened=False,
+            ),
+
+            # Create folder modal
+            dmc.Modal(
+                id="create-folder-modal",
+                title="Create New Folder",
+                size="sm",
+                children=[
+                    dmc.TextInput(
+                        id="new-folder-name",
+                        label="Folder name",
+                        placeholder="Enter folder name",
+                        style={"marginBottom": "16px"},
+                    ),
+                    dmc.Text(id="create-folder-error", c="red", size="sm", style={"marginBottom": "8px"}),
+                    dmc.Group([
+                        dmc.Button("Cancel", id="cancel-folder-btn", variant="outline", color="gray"),
+                        dmc.Button("Create", id="confirm-folder-btn", color="blue"),
+                    ], justify="flex-end"),
                 ],
                 opened=False,
             ),
@@ -176,6 +198,22 @@ Let's get started!"""
                         ),
                         dmc.Group([
                             dmc.ActionIcon(
+                                DashIconify(icon="mdi:folder-plus-outline", width=18),
+                                id="create-folder-btn",
+                                variant="default",
+                                size="md",
+                            ),
+                            dcc.Upload(
+                                id="file-upload-sidebar",
+                                children=dmc.ActionIcon(
+                                    DashIconify(icon="mdi:file-upload-outline", width=18),
+                                    id="upload-btn",
+                                    variant="default",
+                                    size="md",
+                                ),
+                                multiple=True,
+                            ),
+                            dmc.ActionIcon(
                                 DashIconify(icon="mdi:console", width=18),
                                 id="open-terminal-btn",
                                 variant="default",
@@ -196,6 +234,24 @@ Let's get started!"""
 
                     # Files view
                     html.Div([
+                        # Selected folder indicator / root selector
+                        html.Div([
+                            html.Div([
+                                DashIconify(icon="mdi:folder-open", width=16, style={"marginRight": "6px"}),
+                                html.Span(id="selected-folder-display", children="/ (root)"),
+                            ], id="root-folder-selector", className="root-folder-selector", style={
+                                "display": "flex",
+                                "alignItems": "center",
+                                "padding": "6px 10px",
+                                "fontSize": "13px",
+                                "cursor": "pointer",
+                                "borderRadius": "4px",
+                                "background": "var(--mantine-color-blue-light)",
+                            }),
+                        ], style={
+                            "padding": "6px 8px",
+                            "borderBottom": "1px solid var(--mantine-color-default-border)",
+                        }),
                         html.Div(
                             id="file-tree",
                             children=render_file_tree(build_file_tree(workspace_root, workspace_root), colors, styles),

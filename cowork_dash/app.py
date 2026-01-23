@@ -1132,13 +1132,14 @@ def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_
     return messages, False
 
 
-# Folder toggle callback
+# Folder toggle callback - triggered by clicking the expand icon
 @app.callback(
     [Output({"type": "folder-children", "path": ALL}, "style"),
      Output({"type": "folder-icon", "path": ALL}, "style"),
      Output({"type": "folder-children", "path": ALL}, "children")],
-    Input({"type": "folder-header", "path": ALL}, "n_clicks"),
-    [State({"type": "folder-header", "path": ALL}, "data-realpath"),
+    Input({"type": "folder-icon", "path": ALL}, "n_clicks"),
+    [State({"type": "folder-header", "path": ALL}, "id"),
+     State({"type": "folder-header", "path": ALL}, "data-realpath"),
      State({"type": "folder-children", "path": ALL}, "id"),
      State({"type": "folder-icon", "path": ALL}, "id"),
      State({"type": "folder-children", "path": ALL}, "style"),
@@ -1147,7 +1148,7 @@ def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_
      State("theme-store", "data")],
     prevent_initial_call=True
 )
-def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles, icon_styles, children_content, theme):
+def toggle_folder(n_clicks, header_ids, real_paths, children_ids, icon_ids, children_styles, icon_styles, children_content, theme):
     """Toggle folder expansion and lazy load contents if needed."""
     ctx = callback_context
     if not ctx.triggered or not any(n_clicks):
@@ -1162,17 +1163,13 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
     except:
         raise PreventUpdate
 
-    # Find the index of the clicked folder to get its real path
-    clicked_idx = None
-    for i, icon_id in enumerate(icon_ids):
-        if icon_id["path"] == clicked_path:
-            clicked_idx = i
-            break
+    # Build a mapping from folder path to real path using header_ids and real_paths
+    path_to_realpath = {}
+    for i, header_id in enumerate(header_ids):
+        if i < len(real_paths):
+            path_to_realpath[header_id["path"]] = real_paths[i]
 
-    if clicked_idx is None:
-        raise PreventUpdate
-
-    folder_rel_path = real_paths[clicked_idx] if clicked_idx < len(real_paths) else None
+    folder_rel_path = path_to_realpath.get(clicked_path)
     if not folder_rel_path:
         raise PreventUpdate
 
@@ -1201,7 +1198,7 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
                     try:
                         folder_items = load_folder_contents(folder_rel_path, WORKSPACE_ROOT)
                         loaded_content = render_file_tree(folder_items, colors, STYLES,
-                                                          level=folder_rel_path.count("/") + 1,
+                                                          level=folder_rel_path.count("/") + folder_rel_path.count("\\") + 1,
                                                           parent_path=folder_rel_path)
                         new_children_content.append(loaded_content if loaded_content else current_content)
                     except Exception as e:
@@ -1227,11 +1224,11 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
                 current_children_style = children_styles[children_idx] if children_idx < len(children_styles) else {"display": "none"}
                 is_expanded = current_children_style.get("display") != "none"
                 new_icon_styles.append({
-                    "marginRight": "8px",
+                    "marginRight": "5px",
                     "fontSize": "10px",
-                    "color": colors["text_muted"],
-                    "transition": "transform 0.2s",
+                    "transition": "transform 0.15s",
                     "display": "inline-block",
+                    "padding": "2px",
                     "transform": "rotate(0deg)" if is_expanded else "rotate(90deg)",
                 })
             else:
@@ -1240,6 +1237,49 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
             new_icon_styles.append(current_icon_style)
 
     return new_children_styles, new_icon_styles, new_children_content
+
+
+# Folder selection callback - triggered by clicking the folder name
+@app.callback(
+    [Output("selected-folder", "data"),
+     Output("selected-folder-display", "children")],
+    [Input({"type": "folder-select", "path": ALL}, "n_clicks"),
+     Input("root-folder-selector", "n_clicks")],
+    [State({"type": "folder-select", "path": ALL}, "id"),
+     State({"type": "folder-select", "path": ALL}, "data-folderpath")],
+    prevent_initial_call=True
+)
+def select_folder(folder_clicks, root_clicks, folder_ids, folder_paths):
+    """Select a folder for file operations."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    triggered = ctx.triggered[0]["prop_id"]
+
+    # Check if root was clicked
+    if "root-folder-selector" in triggered:
+        return "", "/ (root)"
+
+    # Check if a folder was clicked
+    if not any(folder_clicks):
+        raise PreventUpdate
+
+    try:
+        id_str = triggered.rsplit(".", 1)[0]
+        id_dict = json.loads(id_str)
+        clicked_path = id_dict.get("path")
+    except:
+        raise PreventUpdate
+
+    # Find the actual folder path
+    for i, folder_id in enumerate(folder_ids):
+        if folder_id["path"] == clicked_path:
+            folder_path = folder_paths[i] if i < len(folder_paths) else ""
+            display_name = f"/{folder_path}" if folder_path else "/ (root)"
+            return folder_path, display_name
+
+    raise PreventUpdate
 
 
 # File click - open modal
@@ -1440,7 +1480,7 @@ def refresh_sidebar(n_clicks, theme):
     return file_tree, canvas_content
 
 
-# File upload
+# File upload (chat input area) - always uploads to workspace root
 @app.callback(
     [Output("upload-status", "children"),
      Output("file-tree", "children", allow_duplicate=True)],
@@ -1450,7 +1490,7 @@ def refresh_sidebar(n_clicks, theme):
     prevent_initial_call=True
 )
 def handle_upload(contents, filenames, theme):
-    """Handle file uploads."""
+    """Handle file uploads from chat input area (always to root)."""
     if not contents:
         raise PreventUpdate
 
@@ -1472,6 +1512,113 @@ def handle_upload(contents, filenames, theme):
     if uploaded:
         return f"Uploaded: {', '.join(uploaded)}", render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
     return "Upload failed", no_update
+
+
+# File upload (sidebar button) - uploads to selected folder
+@app.callback(
+    Output("file-tree", "children", allow_duplicate=True),
+    Input("file-upload-sidebar", "contents"),
+    [State("file-upload-sidebar", "filename"),
+     State("selected-folder", "data"),
+     State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def handle_sidebar_upload(contents, filenames, selected_folder, theme):
+    """Handle file uploads from sidebar button to selected folder."""
+    if not contents:
+        raise PreventUpdate
+
+    colors = get_colors(theme or "light")
+    # Upload to selected folder or workspace root
+    base_path = WORKSPACE_ROOT / selected_folder if selected_folder else WORKSPACE_ROOT
+
+    for content, filename in zip(contents, filenames):
+        try:
+            _, content_string = content.split(',')
+            decoded = base64.b64decode(content_string)
+            file_path = base_path / filename
+            try:
+                file_path.write_text(decoded.decode('utf-8'))
+            except UnicodeDecodeError:
+                file_path.write_bytes(decoded)
+        except Exception as e:
+            print(f"Upload error: {e}")
+
+    return render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
+
+
+# Create folder modal - open
+@app.callback(
+    Output("create-folder-modal", "opened"),
+    [Input("create-folder-btn", "n_clicks"),
+     Input("cancel-folder-btn", "n_clicks"),
+     Input("confirm-folder-btn", "n_clicks")],
+    [State("create-folder-modal", "opened"),
+     State("new-folder-name", "value")],
+    prevent_initial_call=True
+)
+def toggle_create_folder_modal(open_clicks, cancel_clicks, confirm_clicks, is_open, folder_name):
+    """Open/close the create folder modal."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if trigger_id == "create-folder-btn":
+        return True
+    elif trigger_id == "cancel-folder-btn":
+        return False
+    elif trigger_id == "confirm-folder-btn":
+        # Close modal only if folder name is provided
+        if folder_name and folder_name.strip():
+            return False
+        return True  # Keep open if no name provided
+
+    return is_open
+
+
+# Create folder - action
+@app.callback(
+    [Output("file-tree", "children", allow_duplicate=True),
+     Output("create-folder-error", "children"),
+     Output("new-folder-name", "value")],
+    Input("confirm-folder-btn", "n_clicks"),
+    [State("new-folder-name", "value"),
+     State("selected-folder", "data"),
+     State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def create_folder(n_clicks, folder_name, selected_folder, theme):
+    """Create a new folder in the selected folder (or workspace root)."""
+    if not n_clicks:
+        raise PreventUpdate
+
+    colors = get_colors(theme or "light")
+
+    if not folder_name or not folder_name.strip():
+        return no_update, "Please enter a folder name", no_update
+
+    folder_name = folder_name.strip()
+
+    # Validate folder name
+    invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+    if any(char in folder_name for char in invalid_chars):
+        return no_update, f"Folder name cannot contain: {' '.join(invalid_chars)}", no_update
+
+    # Create in selected folder or workspace root
+    base_path = WORKSPACE_ROOT / selected_folder if selected_folder else WORKSPACE_ROOT
+    folder_path = base_path / folder_name
+
+    if folder_path.exists():
+        location = f"in '{selected_folder}'" if selected_folder else "in root"
+        return no_update, f"Folder '{folder_name}' already exists {location}", no_update
+
+    try:
+        folder_path.mkdir(parents=True, exist_ok=False)
+        return render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES), "", ""
+    except Exception as e:
+        return no_update, f"Error creating folder: {e}", no_update
 
 
 # View toggle callbacks - using SegmentedControl
