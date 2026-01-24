@@ -177,17 +177,6 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
 
                     # Compact Input
                     html.Div([
-                        dcc.Upload(
-                            id="file-upload",
-                            children=dmc.ActionIcon(
-                                DashIconify(icon="radix-icons:plus", width=18),
-                                id="upload-plus",
-                                variant="default",
-                                size="md",
-                            ),
-                            style={"cursor": "pointer"},
-                            multiple=True
-                        ),
                         dmc.TextInput(
                             id="chat-input",
                             placeholder="Type a message...",
@@ -196,13 +185,19 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
                             size="md",
                         ),
                         dmc.Button("Send", id="send-btn", className="send-btn", size="md"),
+                        dmc.ActionIcon(
+                            DashIconify(icon="mdi:stop", width=20),
+                            id="stop-btn",
+                            variant="filled",
+                            color="red",
+                            size="lg",
+                            radius="sm",
+                            style={"display": "none"},  # Hidden by default, shown when agent is running
+                        ),
                     ], id="chat-input-area", style={
                         "display": "flex", "gap": "8px", "padding": "10px 15px",
                         "borderTop": "1px solid var(--mantine-color-default-border)",
                         "background": "var(--mantine-color-body)",
-                    }),
-                    dmc.Text(id="upload-status", size="sm", c="dimmed", style={
-                        "padding": "0 15px 8px",
                     }),
                 ], id="chat-panel", style={
                     "flex": "1", "display": "flex", "flexDirection": "column",

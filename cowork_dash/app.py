@@ -289,8 +289,16 @@ _agent_state = {
     "interrupt": None,  # Track interrupt requests for human-in-the-loop
     "last_update": time.time(),
     "start_time": None,  # Track when agent started for response time calculation
+    "stop_requested": False,  # Flag to request agent stop
 }
 _agent_state_lock = threading.Lock()
+
+
+def request_agent_stop():
+    """Request the agent to stop execution."""
+    with _agent_state_lock:
+        _agent_state["stop_requested"] = True
+        _agent_state["last_update"] = time.time()
 
 def _run_agent_stream(message: str, resume_data: Dict = None, workspace_path: str = None):
     """Run agent in background thread and update global state in real-time.
@@ -356,6 +364,15 @@ def _run_agent_stream(message: str, resume_data: Dict = None, workspace_path: st
             agent_input = {"messages": [{"role": "user", "content": message_with_context}]}
 
         for update in agent.stream(agent_input, stream_mode="updates", config=stream_config):
+            # Check if stop was requested
+            with _agent_state_lock:
+                if _agent_state.get("stop_requested"):
+                    _agent_state["response"] = _agent_state.get("response", "") + "\n\nAgent stopped by user."
+                    _agent_state["running"] = False
+                    _agent_state["stop_requested"] = False
+                    _agent_state["last_update"] = time.time()
+                    return
+
             # Check for interrupt
             if isinstance(update, dict) and "__interrupt__" in update:
                 interrupt_value = update["__interrupt__"]
@@ -735,6 +752,7 @@ def call_agent(message: str, resume_data: Dict = None, workspace_path: str = Non
             "interrupt": None,  # Clear any previous interrupt
             "last_update": time.time(),
             "start_time": time.time(),  # Track when agent started
+            "stop_requested": False,  # Reset stop flag
         })
 
     # Start background thread
@@ -857,7 +875,7 @@ app.index_string = '''<!DOCTYPE html>
     <head>
         {%metas%}
         <title>{%title%}</title>
-        <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+        <link rel="icon" type="image/svg+xml" href="/assets/favicon.ico">
         {%css%}
     </head>
     <body>
@@ -1126,6 +1144,72 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
 
         # Continue polling
         return messages, no_update, False
+
+
+# Stop button visibility - show when agent is running
+@app.callback(
+    Output("stop-btn", "style"),
+    Input("poll-interval", "n_intervals"),
+    prevent_initial_call=True
+)
+def update_stop_button_visibility(n_intervals):
+    """Show stop button when agent is running, hide otherwise."""
+    state = get_agent_state()
+    if state.get("running"):
+        return {}  # Show button (remove display:none)
+    else:
+        return {"display": "none"}  # Hide button
+
+
+# Stop button click handler
+@app.callback(
+    [Output("chat-messages", "children", allow_duplicate=True),
+     Output("poll-interval", "disabled", allow_duplicate=True)],
+    Input("stop-btn", "n_clicks"),
+    [State("chat-history", "data"),
+     State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def handle_stop_button(n_clicks, history, theme):
+    """Handle stop button click to stop agent execution."""
+    if not n_clicks:
+        raise PreventUpdate
+
+    colors = get_colors(theme or "light")
+    history = history or []
+
+    # Request the agent to stop
+    request_agent_stop()
+
+    # Render current messages with a stopping indicator
+    def render_history_messages(history):
+        messages = []
+        for i, msg in enumerate(history):
+            msg_response_time = msg.get("response_time") if msg["role"] == "assistant" else None
+            messages.append(format_message(msg["role"], msg["content"], colors, STYLES, is_new=False, response_time=msg_response_time))
+            if msg.get("tool_calls"):
+                tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
+                if tool_calls_block:
+                    messages.append(tool_calls_block)
+            if msg.get("todos"):
+                todos_block = format_todos_inline(msg["todos"], colors)
+                if todos_block:
+                    messages.append(todos_block)
+        return messages
+
+    messages = render_history_messages(history)
+
+    # Add stopping message
+    messages.append(html.Div([
+        html.Span("Stopping...", style={
+            "fontSize": "15px",
+            "fontWeight": "500",
+            "color": colors["warning"],
+        })
+    ], className="chat-message chat-message-loading", style={"padding": "12px 15px"}))
+
+    # Keep polling to detect when agent actually stops
+    return messages, False
 
 
 # Interrupt handling callbacks
@@ -1638,40 +1722,6 @@ def refresh_sidebar(n_clicks, current_workspace, theme, collapsed_ids):
     canvas_content = render_canvas_items(canvas_items, colors, collapsed_ids)
 
     return file_tree, canvas_content
-
-
-# File upload (chat input area) - always uploads to workspace root
-@app.callback(
-    [Output("upload-status", "children"),
-     Output("file-tree", "children", allow_duplicate=True)],
-    Input("file-upload", "contents"),
-    [State("file-upload", "filename"),
-     State("theme-store", "data")],
-    prevent_initial_call=True
-)
-def handle_upload(contents, filenames, theme):
-    """Handle file uploads from chat input area (always to root)."""
-    if not contents:
-        raise PreventUpdate
-
-    colors = get_colors(theme or "light")
-    uploaded = []
-    for content, filename in zip(contents, filenames):
-        try:
-            _, content_string = content.split(',')
-            decoded = base64.b64decode(content_string)
-            file_path = WORKSPACE_ROOT / filename
-            try:
-                file_path.write_text(decoded.decode('utf-8'))
-            except UnicodeDecodeError:
-                file_path.write_bytes(decoded)
-            uploaded.append(filename)
-        except Exception as e:
-            print(f"Upload error: {e}")
-
-    if uploaded:
-        return f"Uploaded: {', '.join(uploaded)}", render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
-    return "Upload failed", no_update
 
 
 # File upload (sidebar button) - uploads to current workspace directory
