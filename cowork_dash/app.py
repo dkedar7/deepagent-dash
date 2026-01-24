@@ -485,6 +485,66 @@ def _run_agent_stream(message: str, resume_data: Dict = None, workspace_path: st
                                         except Exception as e:
                                             print(f"Failed to export canvas: {e}")
 
+                                elif last_msg.name == 'update_canvas_item':
+                                    content = last_msg.content
+                                    # Parse the canvas item to update
+                                    if isinstance(content, str):
+                                        try:
+                                            canvas_item = json.loads(content)
+                                        except:
+                                            canvas_item = {"type": "markdown", "data": content}
+                                    elif isinstance(content, dict):
+                                        canvas_item = content
+                                    else:
+                                        canvas_item = {"type": "markdown", "data": str(content)}
+
+                                    item_id = canvas_item.get("id")
+                                    if item_id:
+                                        with _agent_state_lock:
+                                            # Find and replace the item with matching ID
+                                            for i, existing in enumerate(_agent_state["canvas"]):
+                                                if existing.get("id") == item_id:
+                                                    _agent_state["canvas"][i] = canvas_item
+                                                    break
+                                            else:
+                                                # If not found, append as new item
+                                                _agent_state["canvas"].append(canvas_item)
+                                            _agent_state["last_update"] = time.time()
+
+                                            # Export to markdown file
+                                            try:
+                                                export_canvas_to_markdown(_agent_state["canvas"], WORKSPACE_ROOT)
+                                            except Exception as e:
+                                                print(f"Failed to export canvas: {e}")
+
+                                elif last_msg.name == 'remove_canvas_item':
+                                    content = last_msg.content
+                                    # Parse to get the item ID to remove
+                                    if isinstance(content, str):
+                                        try:
+                                            parsed = json.loads(content)
+                                            item_id = parsed.get("id")
+                                        except:
+                                            item_id = content  # Assume string is the ID
+                                    elif isinstance(content, dict):
+                                        item_id = content.get("id")
+                                    else:
+                                        item_id = None
+
+                                    if item_id:
+                                        with _agent_state_lock:
+                                            _agent_state["canvas"] = [
+                                                item for item in _agent_state["canvas"]
+                                                if item.get("id") != item_id
+                                            ]
+                                            _agent_state["last_update"] = time.time()
+
+                                            # Export to markdown file
+                                            try:
+                                                export_canvas_to_markdown(_agent_state["canvas"], WORKSPACE_ROOT)
+                                            except Exception as e:
+                                                print(f"Failed to export canvas: {e}")
+
                                 elif last_msg.name in ('execute_cell', 'execute_all_cells'):
                                     # Extract canvas_items from cell execution results
                                     content = last_msg.content
@@ -1551,13 +1611,15 @@ def open_terminal(n_clicks):
      Output("canvas-content", "children", allow_duplicate=True)],
     Input("refresh-btn", "n_clicks"),
     [State("current-workspace-path", "data"),
-     State("theme-store", "data")],
+     State("theme-store", "data"),
+     State("collapsed-canvas-items", "data")],
     prevent_initial_call=True
 )
-def refresh_sidebar(n_clicks, current_workspace, theme):
+def refresh_sidebar(n_clicks, current_workspace, theme, collapsed_ids):
     """Refresh both file tree and canvas content."""
     global _agent_state
     colors = get_colors(theme or "light")
+    collapsed_ids = collapsed_ids or []
 
     # Calculate current workspace directory
     current_workspace_dir = WORKSPACE_ROOT / current_workspace if current_workspace else WORKSPACE_ROOT
@@ -1572,8 +1634,8 @@ def refresh_sidebar(n_clicks, current_workspace, theme):
     with _agent_state_lock:
         _agent_state["canvas"] = canvas_items
 
-    # Render the canvas items
-    canvas_content = render_canvas_items(canvas_items, colors)
+    # Render the canvas items with preserved collapsed state
+    canvas_content = render_canvas_items(canvas_items, colors, collapsed_ids)
 
     return file_tree, canvas_content
 
@@ -1770,17 +1832,19 @@ def toggle_view(view_value):
     Output("canvas-content", "children"),
     [Input("poll-interval", "n_intervals"),
      Input("sidebar-view-toggle", "value")],
-    [State("theme-store", "data")],
+    [State("theme-store", "data"),
+     State("collapsed-canvas-items", "data")],
     prevent_initial_call=False
 )
-def update_canvas_content(n_intervals, view_value, theme):
+def update_canvas_content(n_intervals, view_value, theme, collapsed_ids):
     """Update canvas content from agent state."""
     state = get_agent_state()
     canvas_items = state.get("canvas", [])
     colors = get_colors(theme or "light")
+    collapsed_ids = collapsed_ids or []
 
-    # Use imported rendering function
-    return render_canvas_items(canvas_items, colors)
+    # Use imported rendering function with preserved collapsed state
+    return render_canvas_items(canvas_items, colors, collapsed_ids)
 
 
 
@@ -1842,6 +1906,171 @@ def clear_canvas(n_clicks, theme):
         "height": "100%",
         "padding": "40px"
     })
+
+
+# Collapse/expand canvas item callback
+@app.callback(
+    [Output({"type": "canvas-item-content", "index": ALL}, "style"),
+     Output({"type": "canvas-collapse-btn", "index": ALL}, "children"),
+     Output("collapsed-canvas-items", "data")],
+    Input({"type": "canvas-collapse-btn", "index": ALL}, "n_clicks"),
+    [State({"type": "canvas-collapse-btn", "index": ALL}, "id"),
+     State({"type": "canvas-item-content", "index": ALL}, "style"),
+     State({"type": "canvas-item-content", "index": ALL}, "id"),
+     State("collapsed-canvas-items", "data")],
+    prevent_initial_call=True
+)
+def toggle_canvas_item_collapse(all_clicks, btn_ids, content_styles, content_ids, collapsed_ids):
+    """Toggle collapse/expand state of a canvas item."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    # Find which button was clicked
+    triggered = ctx.triggered[0]
+    triggered_id = triggered["prop_id"]
+    triggered_value = triggered.get("value")
+
+    if not triggered_value or triggered_value <= 0:
+        raise PreventUpdate
+
+    try:
+        id_str = triggered_id.rsplit(".", 1)[0]
+        id_dict = json.loads(id_str)
+        clicked_item_id = id_dict.get("index")
+    except:
+        raise PreventUpdate
+
+    if not clicked_item_id:
+        raise PreventUpdate
+
+    # Initialize collapsed_ids if None
+    collapsed_ids = collapsed_ids or []
+
+    # Build new styles and icons for all items
+    new_styles = []
+    new_icons = []
+    new_collapsed_ids = collapsed_ids.copy()
+
+    for i, content_id in enumerate(content_ids):
+        item_id = content_id.get("index")
+        current_style = content_styles[i] if i < len(content_styles) else {"display": "block"}
+
+        if item_id == clicked_item_id:
+            # Toggle this item
+            is_collapsed = current_style.get("display") == "none"
+            new_styles.append({"display": "block"} if is_collapsed else {"display": "none"})
+            # Change icon based on new state
+            new_icons.append(
+                DashIconify(icon="mdi:chevron-down" if is_collapsed else "mdi:chevron-right", width=16)
+            )
+            # Update collapsed_ids list
+            if is_collapsed:
+                # Was collapsed, now expanding - remove from list
+                if item_id in new_collapsed_ids:
+                    new_collapsed_ids.remove(item_id)
+            else:
+                # Was expanded, now collapsing - add to list
+                if item_id not in new_collapsed_ids:
+                    new_collapsed_ids.append(item_id)
+        else:
+            new_styles.append(current_style)
+            # Keep existing icon state
+            is_collapsed = current_style.get("display") == "none"
+            new_icons.append(
+                DashIconify(icon="mdi:chevron-right" if is_collapsed else "mdi:chevron-down", width=16)
+            )
+
+    return new_styles, new_icons, new_collapsed_ids
+
+
+# Open delete confirmation modal
+@app.callback(
+    [Output("delete-canvas-item-modal", "opened"),
+     Output("delete-canvas-item-id", "data")],
+    Input({"type": "canvas-delete-btn", "index": ALL}, "n_clicks"),
+    [State({"type": "canvas-delete-btn", "index": ALL}, "id")],
+    prevent_initial_call=True
+)
+def open_delete_confirmation(all_clicks, all_ids):
+    """Open the delete confirmation modal when delete button is clicked."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    triggered = ctx.triggered[0]
+    triggered_id = triggered["prop_id"]
+    triggered_value = triggered.get("value")
+
+    if not triggered_value or triggered_value <= 0:
+        raise PreventUpdate
+
+    try:
+        id_str = triggered_id.rsplit(".", 1)[0]
+        id_dict = json.loads(id_str)
+        item_id_to_delete = id_dict.get("index")
+    except:
+        raise PreventUpdate
+
+    if not item_id_to_delete:
+        raise PreventUpdate
+
+    return True, item_id_to_delete
+
+
+# Handle delete confirmation modal actions
+@app.callback(
+    [Output("canvas-content", "children", allow_duplicate=True),
+     Output("delete-canvas-item-modal", "opened", allow_duplicate=True),
+     Output("collapsed-canvas-items", "data", allow_duplicate=True)],
+    [Input("confirm-delete-canvas-btn", "n_clicks"),
+     Input("cancel-delete-canvas-btn", "n_clicks")],
+    [State("delete-canvas-item-id", "data"),
+     State("theme-store", "data"),
+     State("collapsed-canvas-items", "data")],
+    prevent_initial_call=True
+)
+def handle_delete_confirmation(confirm_clicks, cancel_clicks, item_id, theme, collapsed_ids):
+    """Handle the delete confirmation - either delete or cancel."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if triggered_id == "cancel-delete-canvas-btn":
+        # Close modal without deleting
+        return no_update, False, no_update
+
+    if triggered_id == "confirm-delete-canvas-btn":
+        if not confirm_clicks or not item_id:
+            raise PreventUpdate
+
+        global _agent_state
+        colors = get_colors(theme or "light")
+        collapsed_ids = collapsed_ids or []
+
+        # Remove the item from canvas
+        with _agent_state_lock:
+            _agent_state["canvas"] = [
+                item for item in _agent_state["canvas"]
+                if item.get("id") != item_id
+            ]
+            canvas_items = _agent_state["canvas"].copy()
+
+            # Export updated canvas to markdown file
+            try:
+                export_canvas_to_markdown(canvas_items, WORKSPACE_ROOT)
+            except Exception as e:
+                print(f"Failed to export canvas after delete: {e}")
+
+        # Remove deleted item from collapsed_ids if present
+        new_collapsed_ids = [cid for cid in collapsed_ids if cid != item_id]
+
+        # Render updated canvas with preserved collapsed state and close modal
+        return render_canvas_items(canvas_items, colors, new_collapsed_ids), False, new_collapsed_ids
+
+    raise PreventUpdate
 
 
 # =============================================================================

@@ -798,6 +798,104 @@ details summary:hover {
     color: var(--mantine-color-dark-1);
 }
 
+/* Canvas Item Container with Header - New Enhanced Layout */
+.canvas-item-container {
+    background: var(--mantine-color-body);
+    border: 1px solid var(--mantine-color-gray-3);
+    border-radius: 6px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    transition: box-shadow 0.15s ease;
+}
+
+.canvas-item-container:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.canvas-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--mantine-color-gray-2);
+    background: var(--mantine-color-gray-0);
+}
+
+.canvas-item-title-text {
+    color: var(--mantine-color-text);
+}
+
+.canvas-item-time {
+    font-size: 11px;
+}
+
+.canvas-item-content {
+    padding: 12px;
+}
+
+.canvas-collapse-btn {
+    opacity: 0.6;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.canvas-collapse-btn:hover {
+    opacity: 1;
+}
+
+.canvas-delete-btn {
+    opacity: 0.4;
+    transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.canvas-delete-btn:hover {
+    opacity: 1;
+    color: var(--mantine-color-red-6) !important;
+}
+
+.canvas-item-content-wrapper {
+    transition: max-height 0.2s ease-out;
+    overflow: hidden;
+}
+
+/* Dark mode canvas container */
+[data-mantine-color-scheme="dark"] .canvas-item-container {
+    background: var(--mantine-color-dark-6);
+    border-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-item-container:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-item-header {
+    background: var(--mantine-color-dark-7);
+    border-bottom-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-item-title-text {
+    color: var(--mantine-color-dark-0);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-item-time {
+    color: var(--mantine-color-dark-2);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-collapse-btn {
+    color: var(--mantine-color-dark-2);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-collapse-btn:hover {
+    color: var(--mantine-color-dark-0);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-delete-btn {
+    color: var(--mantine-color-dark-3);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-delete-btn:hover {
+    color: var(--mantine-color-red-4) !important;
+}
+
 /* ============================================
    Scrollbar - Compact
    ============================================ */

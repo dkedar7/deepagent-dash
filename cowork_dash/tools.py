@@ -6,7 +6,7 @@ import subprocess
 from contextlib import redirect_stdout, redirect_stderr
 
 from .config import WORKSPACE_ROOT
-from .canvas import parse_canvas_object
+from .canvas import parse_canvas_object, generate_canvas_id
 
 
 # =============================================================================
@@ -592,44 +592,121 @@ def clear_notebook_canvas_items() -> Dict[str, Any]:
 # CANVAS TOOLS
 # =============================================================================
 
-def add_to_canvas(content: Any) -> Dict[str, Any]:
+def add_to_canvas(content: Any, title: Optional[str] = None, item_id: Optional[str] = None) -> Dict[str, Any]:
     """Add an item to the canvas for visualization. Canvas is like a note-taking tool where
     you can store charts, dataframes, images, and markdown text for the user to see.
 
     Args:
         content: Can be a pandas DataFrame, matplotlib Figure, plotly Figure,
                 PIL Image, dictionary (for Plotly JSON), or string (for Markdown)
-        workspace_root: Path to the workspace root directory
+        title: Optional title for the canvas item (displayed as a header)
+        item_id: Optional unique ID for the item. If provided, can be used to update
+                or remove the item later. Auto-generated if not provided.
 
     Returns:
-        Dictionary with the parsed canvas object
+        Dictionary with the parsed canvas object including its id, type, and data
 
     Examples:
-        # Add a DataFrame
+        # Add a DataFrame with a title
         import pandas as pd
         df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
-        add_to_canvas(df)
+        add_to_canvas(df, title="Sales Data")
 
-        # Add a Matplotlib chart
+        # Add a Matplotlib chart with a custom ID for later updates
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
         ax.plot([1, 2, 3], [1, 4, 9])
-        add_to_canvas(fig)
+        add_to_canvas(fig, title="Growth Chart", item_id="growth_chart")
 
         # Add Markdown text
-        add_to_canvas("## Key Findings\\n- Point 1\\n- Point 2")
+        add_to_canvas("## Key Findings\\n- Point 1\\n- Point 2", title="Summary")
+
+        # Update an existing item by using the same ID
+        add_to_canvas(new_fig, item_id="growth_chart")  # Replaces the previous chart
     """
     try:
-        # Parse the content into canvas format
-        parsed = parse_canvas_object(content, workspace_root=WORKSPACE_ROOT)
+        # Parse the content into canvas format with optional title and ID
+        parsed = parse_canvas_object(
+            content,
+            workspace_root=WORKSPACE_ROOT,
+            title=title,
+            item_id=item_id
+        )
         # Return the parsed object (deepagents will handle the JSON serialization)
         return parsed
     except Exception as e:
         return {
             "type": "error",
+            "id": item_id or generate_canvas_id(),
             "data": f"Failed to add to canvas: {str(e)}",
             "error": str(e)
         }
+
+
+def update_canvas_item(item_id: str, content: Any, title: Optional[str] = None) -> Dict[str, Any]:
+    """Update an existing canvas item by its ID. If the item doesn't exist, it will be added.
+
+    This is useful for updating charts or data that change over time, like progress
+    indicators, live data visualizations, or iteratively refined content.
+
+    Args:
+        item_id: The unique ID of the canvas item to update
+        content: The new content (DataFrame, Figure, Image, string, etc.)
+        title: Optional new title for the item
+
+    Returns:
+        Dictionary with the updated canvas object
+
+    Examples:
+        # Create an initial chart
+        add_to_canvas(initial_fig, title="Progress", item_id="progress_chart")
+
+        # Later, update it with new data
+        update_canvas_item("progress_chart", updated_fig)
+
+        # Update with a new title too
+        update_canvas_item("progress_chart", final_fig, title="Final Results")
+    """
+    try:
+        parsed = parse_canvas_object(
+            content,
+            workspace_root=WORKSPACE_ROOT,
+            title=title,
+            item_id=item_id
+        )
+        parsed["_action"] = "update"  # Signal to app.py to update existing item
+        return parsed
+    except Exception as e:
+        return {
+            "type": "error",
+            "id": item_id,
+            "_action": "update",
+            "data": f"Failed to update canvas item: {str(e)}",
+            "error": str(e)
+        }
+
+
+def remove_canvas_item(item_id: str) -> Dict[str, Any]:
+    """Remove a canvas item by its ID.
+
+    Args:
+        item_id: The unique ID of the canvas item to remove
+
+    Returns:
+        Dictionary confirming the removal action
+
+    Examples:
+        # Add a temporary notification
+        add_to_canvas("Processing...", title="Status", item_id="status_msg")
+
+        # Remove it when done
+        remove_canvas_item("status_msg")
+    """
+    return {
+        "type": "remove",
+        "id": item_id,
+        "_action": "remove"
+    }
 
 
 # =============================================================================

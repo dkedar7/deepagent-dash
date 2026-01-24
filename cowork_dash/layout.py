@@ -42,6 +42,7 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
             dcc.Store(id="file-click-tracker", data={}),
             dcc.Store(id="theme-store", data="light", storage_type="local"),
             dcc.Store(id="current-workspace-path", data=""),  # Relative path from original workspace root
+            dcc.Store(id="collapsed-canvas-items", data=[]),  # Track which canvas items are collapsed
             dcc.Download(id="file-download"),
 
             # Interval for polling agent updates (disabled by default)
@@ -87,6 +88,25 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
                 ],
                 opened=False,
             ),
+
+            # Delete canvas item confirmation modal
+            dmc.Modal(
+                id="delete-canvas-item-modal",
+                title="Delete Canvas Item",
+                size="sm",
+                children=[
+                    dmc.Text("Are you sure you want to delete this canvas item? This action cannot be undone.",
+                             size="sm", style={"marginBottom": "16px"}),
+                    dmc.Group([
+                        dmc.Button("Cancel", id="cancel-delete-canvas-btn", variant="outline", color="gray"),
+                        dmc.Button("Delete", id="confirm-delete-canvas-btn", color="red"),
+                    ], justify="flex-end"),
+                ],
+                opened=False,
+            ),
+
+            # Store for canvas item ID pending deletion
+            dcc.Store(id="delete-canvas-item-id", data=None),
 
             html.Div([
                 # Compact Header

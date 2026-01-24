@@ -85,8 +85,8 @@ Work iteratively like a human using Jupyter:
 4. Keep cells focused on single tasks for easier debugging
 
 ### General
-1. Use write_todos to track your progress and next steps
-2. Use think_tool to reason through complex problems
+1. ALWAYS use write_todos to track your progress and next steps
+2. ALWAYS think_tool to reason through reqests, irrespective of complexity
 3. Be proactive in exploring the filesystem when relevant
 4. Provide clear, helpful responses
 
@@ -113,6 +113,6 @@ agent = create_deep_agent(
         get_notebook_canvas_items,
         clear_notebook_canvas_items,
     ],
-    # interrupt_on=dict(bash=True),
+    interrupt_on=dict(bash=True),
     checkpointer=InMemorySaver()
 )

@@ -1,8 +1,11 @@
 """UI components for rendering messages, canvas items, and other UI elements."""
 
 import json
-from typing import Dict, List
+from datetime import datetime
+from typing import Dict, List, Optional
 from dash import html, dcc
+import dash_mantine_components as dmc
+from dash_iconify import DashIconify
 
 
 def format_message(role: str, content: str, colors: Dict, styles: Dict, is_new: bool = False, response_time: float = None):
@@ -415,8 +418,49 @@ def format_interrupt(interrupt_data: Dict, colors: Dict):
     return html.Div(children, className="interrupt-container")
 
 
-def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
-    """Render all canvas items using CSS classes for theme awareness."""
+def _format_timestamp(iso_timestamp: str) -> str:
+    """Format ISO timestamp to human-readable format."""
+    try:
+        dt = datetime.fromisoformat(iso_timestamp)
+        return dt.strftime("%b %d, %H:%M")
+    except (ValueError, TypeError):
+        return ""
+
+
+def _get_type_badge(item_type: str) -> dmc.Badge:
+    """Get a badge component for the item type."""
+    type_colors = {
+        "markdown": "gray",
+        "dataframe": "blue",
+        "matplotlib": "green",
+        "image": "green",
+        "plotly": "violet",
+        "mermaid": "cyan",
+    }
+    type_labels = {
+        "markdown": "Text",
+        "dataframe": "Table",
+        "matplotlib": "Chart",
+        "image": "Image",
+        "plotly": "Plot",
+        "mermaid": "Diagram",
+    }
+    color = type_colors.get(item_type, "gray")
+    label = type_labels.get(item_type, item_type.title())
+    return dmc.Badge(label, color=color, size="xs", variant="light")
+
+
+def render_canvas_items(canvas_items: List[Dict], colors: Dict, collapsed_ids: Optional[List[str]] = None) -> html.Div:
+    """Render all canvas items using CSS classes for theme awareness.
+
+    Args:
+        canvas_items: List of canvas item dictionaries
+        colors: Color scheme dictionary
+        collapsed_ids: List of item IDs that should be rendered collapsed
+    """
+    if collapsed_ids is None:
+        collapsed_ids = []
+
     if not canvas_items:
         return html.Div([
             html.P("Canvas empty", className="canvas-empty-text", style={
@@ -441,126 +485,172 @@ def render_canvas_items(canvas_items: List[Dict], colors: Dict) -> html.Div:
 
     for i, item in enumerate(canvas_items):
         item_type = item.get("type", "unknown")
+        item_id = item.get("id", f"canvas_item_{i}")
+        is_collapsed = item_id in collapsed_ids
         title = item.get("title")
+        created_at = item.get("created_at", "")
 
-        # Add title if present
+        # Build item header left side with collapse toggle, title, badge, and time
+        header_left = [
+            # Collapse/expand toggle - icon depends on collapsed state
+            dmc.ActionIcon(
+                DashIconify(icon="mdi:chevron-right" if is_collapsed else "mdi:chevron-down", width=16),
+                id={"type": "canvas-collapse-btn", "index": item_id},
+                variant="subtle",
+                color="gray",
+                size="sm",
+                className="canvas-collapse-btn",
+            ),
+        ]
         if title:
-            rendered_items.append(
-                html.H3(title, className="canvas-item-title", style={
-                    "fontSize": "15px",
-                    "fontWeight": "600",
-                    "marginBottom": "8px",
-                    "marginTop": "15px" if i > 0 else "0",
-                })
+            header_left.append(
+                dmc.Text(title, fw=600, size="sm", className="canvas-item-title-text")
             )
+        header_left.append(_get_type_badge(item_type))
+        if created_at:
+            formatted_time = _format_timestamp(created_at)
+            if formatted_time:
+                header_left.append(
+                    dmc.Text(formatted_time, size="xs", c="dimmed", className="canvas-item-time")
+                )
 
-        # Render based on type
+        # Header right side with delete button (shows confirmation on first click)
+        header_right = dmc.Group([
+            # Delete button - first click shows confirm, second click deletes
+            dmc.ActionIcon(
+                DashIconify(icon="mdi:close", width=14),
+                id={"type": "canvas-delete-btn", "index": item_id},
+                variant="subtle",
+                color="gray",
+                size="sm",
+                className="canvas-delete-btn",
+            ),
+        ], gap="xs")
+
+        item_header = html.Div([
+            dmc.Group(header_left, gap="xs"),
+            header_right,
+        ], className="canvas-item-header")
+
+        # Render content based on type
         if item_type == "markdown":
-            rendered_items.append(
-                html.Div([
-                    dcc.Markdown(
-                        item.get("data", ""),
-                        className="canvas-markdown",
-                        style={
-                            "fontSize": "15px",
-                            "lineHeight": "1.5",
-                            "wordBreak": "break-word",
-                            "overflowWrap": "break-word",
-                        }
-                    )
-                ], className="canvas-item canvas-item-markdown")
-            )
+            content = html.Div([
+                dcc.Markdown(
+                    item.get("data", ""),
+                    className="canvas-markdown",
+                    style={
+                        "fontSize": "15px",
+                        "lineHeight": "1.5",
+                        "wordBreak": "break-word",
+                        "overflowWrap": "break-word",
+                    }
+                )
+            ], className="canvas-item-content canvas-item-markdown", style={"padding": "10px"})
 
         elif item_type == "dataframe":
-            rendered_items.append(
-                html.Div([
-                    dcc.Markdown(
-                        item.get("html", ""),
-                        dangerously_allow_html=True,
-                        style={"fontSize": "14px"}
-                    )
-                ], className="canvas-item canvas-item-dataframe", style={
-                    "overflowX": "auto",
-                })
-            )
+            content = html.Div([
+                dcc.Markdown(
+                    item.get("html", ""),
+                    dangerously_allow_html=True,
+                    style={"fontSize": "14px"}
+                )
+            ], className="canvas-item-content canvas-item-dataframe", style={
+                "overflowX": "auto",
+                "padding": "10px",
+            })
 
         elif item_type == "matplotlib" or item_type == "image":
             img_data = item.get("data", "")
-            rendered_items.append(
-                html.Div([
-                    html.Img(
-                        src=f"data:image/png;base64,{img_data}",
-                        style={
-                            "maxWidth": "100%",
-                            "width": "100%",
-                            "height": "auto",
-                            "borderRadius": "5px",
-                            "objectFit": "contain",
-                        }
-                    )
-                ], className="canvas-item canvas-item-image", style={
-                    "textAlign": "center",
-                })
-            )
+            content = html.Div([
+                html.Img(
+                    src=f"data:image/png;base64,{img_data}",
+                    style={
+                        "maxWidth": "100%",
+                        "width": "100%",
+                        "height": "auto",
+                        "borderRadius": "5px",
+                        "objectFit": "contain",
+                    }
+                )
+            ], className="canvas-item-content canvas-item-image", style={
+                "textAlign": "center",
+                "padding": "10px",
+            })
 
         elif item_type == "plotly":
             fig_data = item.get("data", {})
-            rendered_items.append(
-                html.Div([
-                    dcc.Graph(
-                        figure=fig_data,
-                        style={"height": "400px", "width": "100%"},
-                        responsive=True,
-                        config={
-                            "displayModeBar": True,
-                            "displaylogo": False,
-                            "modeBarButtonsToRemove": ["lasso2d", "select2d"],
-                            "responsive": True,
-                        }
-                    )
-                ], className="canvas-item canvas-item-plotly")
-            )
+            content = html.Div([
+                dcc.Graph(
+                    figure=fig_data,
+                    style={"height": "400px", "width": "100%"},
+                    responsive=True,
+                    config={
+                        "displayModeBar": True,
+                        "displaylogo": False,
+                        "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+                        "responsive": True,
+                    }
+                )
+            ], className="canvas-item-content canvas-item-plotly")
 
         elif item_type == "mermaid":
-            # Mermaid diagram
             mermaid_code = item.get("data", "")
-            rendered_items.append(
-                html.Div([
-                    html.Div(
-                        mermaid_code,
-                        className="mermaid-diagram",
-                        style={
-                            "textAlign": "center",
-                            "padding": "25px",
-                            "width": "100%",
-                            "overflow": "auto",
-                            "whiteSpace": "pre",
-                        }
-                    )
-                ], className="canvas-item canvas-item-mermaid", style={
-                    "textAlign": "center",
-                    "overflow": "auto",
-                })
-            )
+            content = html.Div([
+                html.Div(
+                    mermaid_code,
+                    className="mermaid-diagram",
+                    style={
+                        "textAlign": "center",
+                        "padding": "25px",
+                        "width": "100%",
+                        "overflow": "auto",
+                        "whiteSpace": "pre",
+                    }
+                )
+            ], className="canvas-item-content canvas-item-mermaid", style={
+                "textAlign": "center",
+                "overflow": "auto",
+            })
 
         else:
             # Unknown type
-            rendered_items.append(
-                html.Div([
-                    html.Code(
-                        str(item),
-                        className="canvas-code",
-                        style={
-                            "fontSize": "15px",
-                            "display": "block",
-                            "whiteSpace": "pre-wrap",
-                            "wordBreak": "break-word",
-                        }
-                    )
-                ], className="canvas-item canvas-item-code", style={
-                    "overflow": "auto",
-                })
-            )
+            content = html.Div([
+                html.Code(
+                    str(item),
+                    className="canvas-code",
+                    style={
+                        "fontSize": "15px",
+                        "display": "block",
+                        "whiteSpace": "pre-wrap",
+                        "wordBreak": "break-word",
+                    }
+                )
+            ], className="canvas-item-content canvas-item-code", style={
+                "overflow": "auto",
+                "padding": "10px",
+            })
+
+        # Wrap content in collapsible container - respect collapsed state
+        content_wrapper = html.Div(
+            content,
+            id={"type": "canvas-item-content", "index": item_id},
+            className="canvas-item-content-wrapper",
+            style={"display": "none" if is_collapsed else "block"}
+        )
+
+        # Wrap header and content in item container
+        rendered_items.append(
+            html.Div([
+                item_header,
+                content_wrapper,
+            ], id={"type": "canvas-item", "index": item_id}, className="canvas-item-container", style={
+                "border": "1px solid var(--mantine-color-default-border)",
+                "borderRadius": "6px",
+                "marginBottom": "12px",
+                "overflow": "hidden",
+                "background": "var(--mantine-color-body)",
+            })
+        )
 
     return html.Div(rendered_items, style={
         "maxWidth": "100%",
