@@ -201,6 +201,7 @@ APP_SUBTITLE = config.APP_SUBTITLE
 PORT = config.PORT
 HOST = config.HOST
 DEBUG = config.DEBUG
+WELCOME_MESSAGE = config.WELCOME_MESSAGE
 
 # Ensure workspace exists
 WORKSPACE_ROOT.mkdir(exist_ok=True, parents=True)
@@ -291,12 +292,13 @@ _agent_state = {
 }
 _agent_state_lock = threading.Lock()
 
-def _run_agent_stream(message: str, resume_data: Dict = None):
+def _run_agent_stream(message: str, resume_data: Dict = None, workspace_path: str = None):
     """Run agent in background thread and update global state in real-time.
 
     Args:
         message: User message to send to agent
         resume_data: Optional dict with 'decisions' to resume from interrupt
+        workspace_path: Current workspace directory path to inject into agent context
     """
     if not agent:
         with _agent_state_lock:
@@ -345,7 +347,13 @@ def _run_agent_stream(message: str, resume_data: Dict = None):
             from langgraph.types import Command
             agent_input = Command(resume=resume_data)
         else:
-            agent_input = {"messages": [{"role": "user", "content": message}]}
+            # Inject workspace context into the message if available
+            if workspace_path:
+                context_prefix = f"[Current working directory: {workspace_path}]\n\n"
+                message_with_context = context_prefix + message
+            else:
+                message_with_context = message
+            agent_input = {"messages": [{"role": "user", "content": message_with_context}]}
 
         for update in agent.stream(agent_input, stream_mode="updates", config=stream_config):
             # Check for interrupt
@@ -643,12 +651,13 @@ def _process_interrupt(interrupt_value: Any) -> Dict[str, Any]:
 
     return interrupt_data
 
-def call_agent(message: str, resume_data: Dict = None):
+def call_agent(message: str, resume_data: Dict = None, workspace_path: str = None):
     """Start agent execution in background thread.
 
     Args:
         message: User message to send to agent
         resume_data: Optional dict with decisions to resume from interrupt
+        workspace_path: Current workspace directory path to inject into agent context
     """
     # Reset state but preserve canvas - do it all atomically
     with _agent_state_lock:
@@ -669,7 +678,7 @@ def call_agent(message: str, resume_data: Dict = None):
         })
 
     # Start background thread
-    thread = threading.Thread(target=_run_agent_stream, args=(message, resume_data))
+    thread = threading.Thread(target=_run_agent_stream, args=(message, resume_data, workspace_path))
     thread.daemon = True
     thread.start()
 
@@ -818,7 +827,8 @@ def create_layout():
         app_subtitle=subtitle,
         colors=COLORS,
         styles=STYLES,
-        agent=agent
+        agent=agent,
+        welcome_message=WELCOME_MESSAGE
     )
 
 # Set layout as a function so it uses current WORKSPACE_ROOT
@@ -871,10 +881,11 @@ def display_initial_messages(history, theme):
      Input("chat-input", "n_submit")],
     [State("chat-input", "value"),
      State("chat-history", "data"),
-     State("theme-store", "data")],
+     State("theme-store", "data"),
+     State("current-workspace-path", "data")],
     prevent_initial_call=True
 )
-def handle_send_immediate(n_clicks, n_submit, message, history, theme):
+def handle_send_immediate(n_clicks, n_submit, message, history, theme, current_workspace_path):
     """Phase 1: Immediately show user message and start agent."""
     if not message or not message.strip():
         raise PreventUpdate
@@ -903,8 +914,11 @@ def handle_send_immediate(n_clicks, n_submit, message, history, theme):
 
     messages.append(format_loading(colors))
 
-    # Start agent in background
-    call_agent(message)
+    # Calculate full workspace path for agent context
+    workspace_full_path = WORKSPACE_ROOT / current_workspace_path if current_workspace_path else WORKSPACE_ROOT
+
+    # Start agent in background with workspace context
+    call_agent(message, workspace_path=str(workspace_full_path))
 
     # Enable polling
     return messages, history, "", message, False
@@ -1239,47 +1253,127 @@ def toggle_folder(n_clicks, header_ids, real_paths, children_ids, icon_ids, chil
     return new_children_styles, new_icon_styles, new_children_content
 
 
-# Folder selection callback - triggered by clicking the folder name
+# Enter folder callback - triggered by double-clicking folder name (changes workspace root)
 @app.callback(
-    [Output("selected-folder", "data"),
-     Output("selected-folder-display", "children")],
+    [Output("current-workspace-path", "data"),
+     Output("workspace-breadcrumb", "children"),
+     Output("file-tree", "children", allow_duplicate=True)],
     [Input({"type": "folder-select", "path": ALL}, "n_clicks"),
-     Input("root-folder-selector", "n_clicks")],
+     Input("breadcrumb-root", "n_clicks"),
+     Input({"type": "breadcrumb-segment", "index": ALL}, "n_clicks")],
     [State({"type": "folder-select", "path": ALL}, "id"),
-     State({"type": "folder-select", "path": ALL}, "data-folderpath")],
+     State({"type": "folder-select", "path": ALL}, "data-folderpath"),
+     State({"type": "folder-select", "path": ALL}, "n_clicks"),
+     State("current-workspace-path", "data"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def select_folder(folder_clicks, root_clicks, folder_ids, folder_paths):
-    """Select a folder for file operations."""
+def enter_folder(folder_clicks, root_clicks, breadcrumb_clicks, folder_ids, folder_paths, prev_clicks, current_path, theme):
+    """Enter a folder (double-click) or navigate via breadcrumb."""
     ctx = callback_context
     if not ctx.triggered:
         raise PreventUpdate
 
+    colors = get_colors(theme or "light")
     triggered = ctx.triggered[0]["prop_id"]
 
-    # Check if root was clicked
-    if "root-folder-selector" in triggered:
-        return "", "/ (root)"
+    new_path = current_path or ""
 
-    # Check if a folder was clicked
-    if not any(folder_clicks):
+    # Check if breadcrumb root was clicked
+    if "breadcrumb-root" in triggered:
+        new_path = ""
+    # Check if a breadcrumb segment was clicked
+    elif "breadcrumb-segment" in triggered:
+        try:
+            id_str = triggered.rsplit(".", 1)[0]
+            id_dict = json.loads(id_str)
+            segment_index = id_dict.get("index")
+            # Build path up to this segment
+            if current_path:
+                parts = current_path.split("/")
+                new_path = "/".join(parts[:segment_index + 1])
+            else:
+                new_path = ""
+        except:
+            raise PreventUpdate
+    # Check if a folder was double-clicked (n_clicks >= 2 and increased by 1)
+    elif "folder-select" in triggered:
+        try:
+            id_str = triggered.rsplit(".", 1)[0]
+            id_dict = json.loads(id_str)
+            clicked_path = id_dict.get("path")
+        except:
+            raise PreventUpdate
+
+        # Find the folder and check for double-click
+        for i, folder_id in enumerate(folder_ids):
+            if folder_id["path"] == clicked_path:
+                current_clicks = folder_clicks[i] if i < len(folder_clicks) else 0
+                previous_clicks = prev_clicks[i] if i < len(prev_clicks) else 0
+
+                # Only enter on double-click (clicks increased and is even number >= 2)
+                if current_clicks and current_clicks >= 2 and current_clicks % 2 == 0:
+                    folder_rel_path = folder_paths[i] if i < len(folder_paths) else ""
+                    # Combine with current workspace path
+                    if current_path:
+                        new_path = f"{current_path}/{folder_rel_path}"
+                    else:
+                        new_path = folder_rel_path
+                else:
+                    # Single click - don't change workspace
+                    raise PreventUpdate
+                break
+        else:
+            raise PreventUpdate
+    else:
         raise PreventUpdate
 
-    try:
-        id_str = triggered.rsplit(".", 1)[0]
-        id_dict = json.loads(id_str)
-        clicked_path = id_dict.get("path")
-    except:
-        raise PreventUpdate
+    # Build breadcrumb navigation
+    breadcrumb_children = [
+        html.Span([
+            DashIconify(icon="mdi:home", width=14, style={"marginRight": "4px"}),
+            "root"
+        ], id="breadcrumb-root", className="breadcrumb-item breadcrumb-clickable", style={
+            "display": "inline-flex",
+            "alignItems": "center",
+            "cursor": "pointer",
+            "padding": "2px 6px",
+            "borderRadius": "3px",
+        }),
+    ]
 
-    # Find the actual folder path
-    for i, folder_id in enumerate(folder_ids):
-        if folder_id["path"] == clicked_path:
-            folder_path = folder_paths[i] if i < len(folder_paths) else ""
-            display_name = f"/{folder_path}" if folder_path else "/ (root)"
-            return folder_path, display_name
+    if new_path:
+        parts = new_path.split("/")
+        for i, part in enumerate(parts):
+            # Add separator
+            breadcrumb_children.append(
+                html.Span(" / ", className="breadcrumb-separator", style={
+                    "color": "var(--mantine-color-dimmed)",
+                    "margin": "0 2px",
+                })
+            )
+            # Add clickable segment
+            breadcrumb_children.append(
+                html.Span(part, id={"type": "breadcrumb-segment", "index": i},
+                    className="breadcrumb-item breadcrumb-clickable",
+                    style={
+                        "cursor": "pointer",
+                        "padding": "2px 6px",
+                        "borderRadius": "3px",
+                    }
+                )
+            )
 
-    raise PreventUpdate
+    # Calculate the actual workspace path
+    workspace_full_path = WORKSPACE_ROOT / new_path if new_path else WORKSPACE_ROOT
+
+    # Render new file tree
+    file_tree = render_file_tree(
+        build_file_tree(workspace_full_path, workspace_full_path),
+        colors, STYLES
+    )
+
+    return new_path, breadcrumb_children, file_tree
 
 
 # File click - open modal
@@ -1456,18 +1550,22 @@ def open_terminal(n_clicks):
     [Output("file-tree", "children"),
      Output("canvas-content", "children", allow_duplicate=True)],
     Input("refresh-btn", "n_clicks"),
-    [State("theme-store", "data")],
+    [State("current-workspace-path", "data"),
+     State("theme-store", "data")],
     prevent_initial_call=True
 )
-def refresh_sidebar(n_clicks, theme):
+def refresh_sidebar(n_clicks, current_workspace, theme):
     """Refresh both file tree and canvas content."""
     global _agent_state
     colors = get_colors(theme or "light")
 
-    # Refresh file tree
-    file_tree = render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
+    # Calculate current workspace directory
+    current_workspace_dir = WORKSPACE_ROOT / current_workspace if current_workspace else WORKSPACE_ROOT
 
-    # Refresh canvas by reloading from .canvas/canvas.md file
+    # Refresh file tree for current workspace
+    file_tree = render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES)
+
+    # Refresh canvas by reloading from .canvas/canvas.md file (always from original root)
     canvas_items = load_canvas_from_markdown(WORKSPACE_ROOT)
 
     # Update agent state with reloaded canvas
@@ -1514,29 +1612,29 @@ def handle_upload(contents, filenames, theme):
     return "Upload failed", no_update
 
 
-# File upload (sidebar button) - uploads to selected folder
+# File upload (sidebar button) - uploads to current workspace directory
 @app.callback(
     Output("file-tree", "children", allow_duplicate=True),
     Input("file-upload-sidebar", "contents"),
     [State("file-upload-sidebar", "filename"),
-     State("selected-folder", "data"),
+     State("current-workspace-path", "data"),
      State("theme-store", "data")],
     prevent_initial_call=True
 )
-def handle_sidebar_upload(contents, filenames, selected_folder, theme):
-    """Handle file uploads from sidebar button to selected folder."""
+def handle_sidebar_upload(contents, filenames, current_workspace, theme):
+    """Handle file uploads from sidebar button to current workspace."""
     if not contents:
         raise PreventUpdate
 
     colors = get_colors(theme or "light")
-    # Upload to selected folder or workspace root
-    base_path = WORKSPACE_ROOT / selected_folder if selected_folder else WORKSPACE_ROOT
+    # Calculate current workspace directory
+    current_workspace_dir = WORKSPACE_ROOT / current_workspace if current_workspace else WORKSPACE_ROOT
 
     for content, filename in zip(contents, filenames):
         try:
             _, content_string = content.split(',')
             decoded = base64.b64decode(content_string)
-            file_path = base_path / filename
+            file_path = current_workspace_dir / filename
             try:
                 file_path.write_text(decoded.decode('utf-8'))
             except UnicodeDecodeError:
@@ -1544,7 +1642,7 @@ def handle_sidebar_upload(contents, filenames, selected_folder, theme):
         except Exception as e:
             print(f"Upload error: {e}")
 
-    return render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
+    return render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES)
 
 
 # Create folder modal - open
@@ -1585,12 +1683,12 @@ def toggle_create_folder_modal(open_clicks, cancel_clicks, confirm_clicks, is_op
      Output("new-folder-name", "value")],
     Input("confirm-folder-btn", "n_clicks"),
     [State("new-folder-name", "value"),
-     State("selected-folder", "data"),
+     State("current-workspace-path", "data"),
      State("theme-store", "data")],
     prevent_initial_call=True
 )
-def create_folder(n_clicks, folder_name, selected_folder, theme):
-    """Create a new folder in the selected folder (or workspace root)."""
+def create_folder(n_clicks, folder_name, current_workspace, theme):
+    """Create a new folder in the current workspace directory."""
     if not n_clicks:
         raise PreventUpdate
 
@@ -1606,17 +1704,16 @@ def create_folder(n_clicks, folder_name, selected_folder, theme):
     if any(char in folder_name for char in invalid_chars):
         return no_update, f"Folder name cannot contain: {' '.join(invalid_chars)}", no_update
 
-    # Create in selected folder or workspace root
-    base_path = WORKSPACE_ROOT / selected_folder if selected_folder else WORKSPACE_ROOT
-    folder_path = base_path / folder_name
+    # Calculate current workspace directory
+    current_workspace_dir = WORKSPACE_ROOT / current_workspace if current_workspace else WORKSPACE_ROOT
+    folder_path = current_workspace_dir / folder_name
 
     if folder_path.exists():
-        location = f"in '{selected_folder}'" if selected_folder else "in root"
-        return no_update, f"Folder '{folder_name}' already exists {location}", no_update
+        return no_update, f"Folder '{folder_name}' already exists", no_update
 
     try:
         folder_path.mkdir(parents=True, exist_ok=False)
-        return render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES), "", ""
+        return render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES), "", ""
     except Exception as e:
         return no_update, f"Error creating folder: {e}", no_update
 
@@ -1809,6 +1906,7 @@ def run_app(
     debug=None,
     title=None,
     subtitle=None,
+    welcome_message=None,
     config_file=None
 ):
     """
@@ -1829,6 +1927,7 @@ def run_app(
         debug (bool, optional): Debug mode
         title (str, optional): Application title
         subtitle (str, optional): Application subtitle
+        welcome_message (str, optional): Welcome message shown on startup (supports markdown)
         config_file (str, optional): Path to config file (default: ./config.py)
 
     Returns:
@@ -1849,7 +1948,7 @@ def run_app(
         >>> # Without agent (manual mode)
         >>> run_app(workspace="~/my-workspace", debug=True)
     """
-    global WORKSPACE_ROOT, APP_TITLE, APP_SUBTITLE, PORT, HOST, DEBUG, agent, AGENT_ERROR, args
+    global WORKSPACE_ROOT, APP_TITLE, APP_SUBTITLE, PORT, HOST, DEBUG, WELCOME_MESSAGE, agent, AGENT_ERROR, args
 
     # Load config file if specified and exists
     config_module = None
@@ -1874,6 +1973,7 @@ def run_app(
         PORT = port if port is not None else getattr(config_module, "PORT", config.PORT)
         HOST = host if host else getattr(config_module, "HOST", config.HOST)
         DEBUG = debug if debug is not None else getattr(config_module, "DEBUG", config.DEBUG)
+        WELCOME_MESSAGE = welcome_message if welcome_message else getattr(config_module, "WELCOME_MESSAGE", config.WELCOME_MESSAGE)
 
         # Agent priority: agent_spec > agent_instance > config file
         if agent_spec:
@@ -1904,6 +2004,7 @@ def run_app(
         PORT = port if port is not None else config.PORT
         HOST = host if host else config.HOST
         DEBUG = debug if debug is not None else config.DEBUG
+        WELCOME_MESSAGE = welcome_message if welcome_message else config.WELCOME_MESSAGE
 
         # Agent priority: agent_spec > agent_instance > config default
         if agent_spec:

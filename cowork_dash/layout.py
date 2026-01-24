@@ -5,9 +5,10 @@ import dash_mantine_components as dmc
 from dash_iconify import DashIconify
 
 from .file_utils import build_file_tree, render_file_tree
+from .config import WELCOME_MESSAGE as DEFAULT_WELCOME_MESSAGE
 
 
-def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent):
+def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent, welcome_message=None):
     """
     Create the app layout with current configuration.
 
@@ -18,10 +19,14 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
         colors: Color scheme dictionary
         styles: Styles dictionary
         agent: Agent instance (or None)
+        welcome_message: Optional welcome message (uses default if not provided)
 
     Returns:
         Dash layout component
     """
+    # Use provided welcome message or fall back to default
+    message = welcome_message if welcome_message is not None else DEFAULT_WELCOME_MESSAGE
+
     return dmc.MantineProvider(
         id="mantine-provider",
         forceColorScheme="light",
@@ -29,21 +34,14 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
             # State stores
             dcc.Store(id="chat-history", data=[{
                 "role": "assistant",
-                "content": f"""This is your AI-powered workspace. I can help you write code, analyze files, create visualizations, and more.
-
-**Getting Started:**
-- Type a message below to chat with me
-- Browse files on the right (click to view, ↓ to download)
-- Switch to **Canvas** tab to see charts and diagrams I create
-
-Let's get started!"""
+                "content": message
             }]),
             dcc.Store(id="pending-message", data=None),
             dcc.Store(id="expanded-folders", data=[]),
             dcc.Store(id="file-to-view", data=None),
             dcc.Store(id="file-click-tracker", data={}),
             dcc.Store(id="theme-store", data="light", storage_type="local"),
-            dcc.Store(id="selected-folder", data=""),  # Empty string = workspace root
+            dcc.Store(id="current-workspace-path", data=""),  # Relative path from original workspace root
             dcc.Download(id="file-download"),
 
             # Interval for polling agent updates (disabled by default)
@@ -234,23 +232,30 @@ Let's get started!"""
 
                     # Files view
                     html.Div([
-                        # Selected folder indicator / root selector
+                        # Workspace path breadcrumb navigation
                         html.Div([
-                            html.Div([
-                                DashIconify(icon="mdi:folder-open", width=16, style={"marginRight": "6px"}),
-                                html.Span(id="selected-folder-display", children="/ (root)"),
-                            ], id="root-folder-selector", className="root-folder-selector", style={
+                            html.Div(id="workspace-breadcrumb", children=[
+                                html.Span([
+                                    DashIconify(icon="mdi:home", width=14, style={"marginRight": "4px"}),
+                                    "root"
+                                ], id="breadcrumb-root", className="breadcrumb-item breadcrumb-clickable", style={
+                                    "display": "inline-flex",
+                                    "alignItems": "center",
+                                    "cursor": "pointer",
+                                    "padding": "2px 6px",
+                                    "borderRadius": "3px",
+                                }),
+                            ], style={
                                 "display": "flex",
                                 "alignItems": "center",
-                                "padding": "6px 10px",
+                                "flexWrap": "wrap",
+                                "gap": "2px",
                                 "fontSize": "13px",
-                                "cursor": "pointer",
-                                "borderRadius": "4px",
-                                "background": "var(--mantine-color-blue-light)",
                             }),
-                        ], style={
-                            "padding": "6px 8px",
+                        ], className="breadcrumb-bar", style={
+                            "padding": "6px 10px",
                             "borderBottom": "1px solid var(--mantine-color-default-border)",
+                            "background": "var(--mantine-color-gray-0)",
                         }),
                         html.Div(
                             id="file-tree",

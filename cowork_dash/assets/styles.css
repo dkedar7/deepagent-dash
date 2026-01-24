@@ -118,14 +118,24 @@ details summary:hover {
     padding: 0;
 }
 
-/* Folder selection styles */
-.root-folder-selector {
+/* Breadcrumb navigation styles */
+.breadcrumb-bar {
+    background: var(--mantine-color-gray-0);
+}
+.breadcrumb-item {
     transition: background 0.15s ease;
 }
-.root-folder-selector:hover {
-    background: var(--mantine-color-blue-light-hover) !important;
+.breadcrumb-clickable:hover {
+    background: var(--mantine-color-blue-light) !important;
+}
+.breadcrumb-separator {
+    user-select: none;
+}
+[data-mantine-color-scheme="dark"] .breadcrumb-bar {
+    background: var(--mantine-color-dark-6) !important;
 }
 
+/* Folder selection styles */
 .folder-select-target {
     transition: background 0.15s ease;
 }
@@ -141,12 +151,9 @@ details summary:hover {
     opacity: 1;
 }
 
-/* Dark mode - folder selection */
-[data-mantine-color-scheme="dark"] .root-folder-selector {
-    background: var(--mantine-color-blue-9) !important;
-}
-[data-mantine-color-scheme="dark"] .root-folder-selector:hover {
-    background: var(--mantine-color-blue-8) !important;
+/* Dark mode - breadcrumb and folder selection */
+[data-mantine-color-scheme="dark"] .breadcrumb-clickable:hover {
+    background: var(--mantine-color-dark-5) !important;
 }
 [data-mantine-color-scheme="dark"] .folder-select-target:hover {
     background: var(--mantine-color-blue-9) !important;
