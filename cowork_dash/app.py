@@ -1854,64 +1854,93 @@ def update_canvas_content(n_intervals, view_value, theme, collapsed_ids):
 
 
 
-# Clear canvas callback
+# Open clear canvas confirmation modal
 @app.callback(
-    Output("canvas-content", "children", allow_duplicate=True),
+    Output("clear-canvas-modal", "opened"),
     Input("clear-canvas-btn", "n_clicks"),
+    prevent_initial_call=True
+)
+def open_clear_canvas_modal(n_clicks):
+    """Open the clear canvas confirmation modal."""
+    if not n_clicks:
+        raise PreventUpdate
+    return True
+
+
+# Handle clear canvas confirmation
+@app.callback(
+    [Output("canvas-content", "children", allow_duplicate=True),
+     Output("clear-canvas-modal", "opened", allow_duplicate=True),
+     Output("collapsed-canvas-items", "data", allow_duplicate=True)],
+    [Input("confirm-clear-canvas-btn", "n_clicks"),
+     Input("cancel-clear-canvas-btn", "n_clicks")],
     [State("theme-store", "data")],
     prevent_initial_call=True
 )
-def clear_canvas(n_clicks, theme):
-    """Clear the canvas and archive the .canvas folder with a timestamp."""
-    if not n_clicks:
+def handle_clear_canvas_confirmation(confirm_clicks, cancel_clicks, theme):
+    """Handle the clear canvas confirmation - either clear or cancel."""
+    ctx = callback_context
+    if not ctx.triggered:
         raise PreventUpdate
 
-    global _agent_state
-    colors = get_colors(theme or "light")
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if triggered_id == "cancel-clear-canvas-btn":
+        # Close modal without clearing
+        return no_update, False, no_update
 
-    # Archive .canvas folder if it exists (contains canvas.md and all assets)
-    canvas_dir = WORKSPACE_ROOT / ".canvas"
-    if canvas_dir.exists() and canvas_dir.is_dir():
-        try:
-            archive_dir = WORKSPACE_ROOT / f".canvas_{timestamp}"
-            shutil.move(str(canvas_dir), str(archive_dir))
-            print(f"Archived .canvas folder to {archive_dir}")
-        except Exception as e:
-            print(f"Failed to archive .canvas folder: {e}")
+    if triggered_id == "confirm-clear-canvas-btn":
+        if not confirm_clicks:
+            raise PreventUpdate
 
-    # Clear canvas in state
-    with _agent_state_lock:
-        _agent_state["canvas"] = []
+        global _agent_state
+        colors = get_colors(theme or "light")
 
-    # Return empty state
-    return html.Div([
-        html.Div("🗒", style={
-            "fontSize": "48px",
-            "textAlign": "center",
-            "marginBottom": "16px",
-            "opacity": "0.3"
-        }),
-        html.P("Canvas is empty", style={
-            "textAlign": "center",
-            "color": colors["text_muted"],
-            "fontSize": "14px"
-        }),
-        html.P("The agent will add visualizations, charts, and notes here", style={
-            "textAlign": "center",
-            "color": colors["text_muted"],
-            "fontSize": "12px",
-            "marginTop": "8px"
-        })
-    ], style={
-        "display": "flex",
-        "flexDirection": "column",
-        "alignItems": "center",
-        "justifyContent": "center",
-        "height": "100%",
-        "padding": "40px"
-    })
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Archive .canvas folder if it exists (contains canvas.md and all assets)
+        canvas_dir = WORKSPACE_ROOT / ".canvas"
+        if canvas_dir.exists() and canvas_dir.is_dir():
+            try:
+                archive_dir = WORKSPACE_ROOT / f".canvas_{timestamp}"
+                shutil.move(str(canvas_dir), str(archive_dir))
+                print(f"Archived .canvas folder to {archive_dir}")
+            except Exception as e:
+                print(f"Failed to archive .canvas folder: {e}")
+
+        # Clear canvas in state
+        with _agent_state_lock:
+            _agent_state["canvas"] = []
+
+        # Return empty state, close modal, and clear collapsed items
+        return html.Div([
+            html.Div("🗒", style={
+                "fontSize": "48px",
+                "textAlign": "center",
+                "marginBottom": "16px",
+                "opacity": "0.3"
+            }),
+            html.P("Canvas is empty", style={
+                "textAlign": "center",
+                "color": colors["text_muted"],
+                "fontSize": "14px"
+            }),
+            html.P("The agent will add visualizations, charts, and notes here", style={
+                "textAlign": "center",
+                "color": colors["text_muted"],
+                "fontSize": "12px",
+                "marginTop": "8px"
+            })
+        ], style={
+            "display": "flex",
+            "flexDirection": "column",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "height": "100%",
+            "padding": "40px"
+        }), False, []
+
+    raise PreventUpdate
 
 
 # Collapse/expand canvas item callback

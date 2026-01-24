@@ -108,6 +108,22 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
             # Store for canvas item ID pending deletion
             dcc.Store(id="delete-canvas-item-id", data=None),
 
+            # Clear canvas confirmation modal
+            dmc.Modal(
+                id="clear-canvas-modal",
+                title="Clear Canvas",
+                size="sm",
+                children=[
+                    dmc.Text("Are you sure you want to clear the entire canvas? The current canvas will be archived with a timestamp.",
+                             size="sm", style={"marginBottom": "16px"}),
+                    dmc.Group([
+                        dmc.Button("Cancel", id="cancel-clear-canvas-btn", variant="outline", color="gray"),
+                        dmc.Button("Clear", id="confirm-clear-canvas-btn", color="red"),
+                    ], justify="flex-end"),
+                ],
+                opened=False,
+            ),
+
             html.Div([
                 # Compact Header
                 html.Header([
