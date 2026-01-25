@@ -4,6 +4,7 @@ import sys
 import json
 import base64
 import re
+import copy
 import shutil
 import platform
 import subprocess
@@ -850,9 +851,17 @@ def resume_agent_from_interrupt(decision: str, action: str = "approve", action_r
     thread.start()
 
 def get_agent_state() -> Dict[str, Any]:
-    """Get current agent state (thread-safe)."""
+    """Get current agent state (thread-safe).
+
+    Returns a deep copy of mutable collections to prevent race conditions.
+    """
     with _agent_state_lock:
-        return _agent_state.copy()
+        state = _agent_state.copy()
+        # Deep copy mutable collections to prevent race conditions during rendering
+        state["tool_calls"] = copy.deepcopy(_agent_state["tool_calls"])
+        state["todos"] = copy.deepcopy(_agent_state["todos"])
+        state["canvas"] = copy.deepcopy(_agent_state["canvas"])
+        return state
 
 def reset_agent_state():
     """Reset agent state for a fresh session (thread-safe).
@@ -1106,7 +1115,7 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
             messages.append(interrupt_block)
 
         # Disable polling - wait for user to respond to interrupt
-        return messages, no_update, True
+        return messages, no_update, True, no_update
 
     # Check if agent is done
     if not state["running"]:
