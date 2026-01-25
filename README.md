@@ -2,6 +2,11 @@
 
 A web interface for AI agent interactions with filesystem workspace, canvas visualization, and real-time streaming.
 
+<p align="center">
+  <img src="docs/light.png" alt="Cowork Dash - Light Mode" width="48%">
+  <img src="docs/dark.png" alt="Cowork Dash - Dark Mode" width="48%">
+</p>
+
 ## Features
 
 - **AI Agent Chat**: Real-time streaming with thinking process and task progress
