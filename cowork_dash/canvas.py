@@ -4,12 +4,30 @@ import io
 import json
 import base64
 import re
+import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 
-def parse_canvas_object(obj: Any, workspace_root: Path) -> Dict[str, Any]:
+
+def generate_canvas_id() -> str:
+    """Generate a unique ID for a canvas item."""
+    return f"canvas_{uuid.uuid4().hex[:8]}"
+
+
+def parse_canvas_object(
+    obj: Any,
+    workspace_root: Path,
+    title: Optional[str] = None,
+    item_id: Optional[str] = None
+) -> Dict[str, Any]:
     """Parse Python objects into canvas-renderable format.
+
+    Args:
+        obj: The Python object to parse (DataFrame, Figure, Image, str, etc.)
+        workspace_root: Path to the workspace root directory
+        title: Optional title for the canvas item
+        item_id: Optional ID for the canvas item (auto-generated if not provided)
 
     Supports:
     - pd.DataFrame (inline in markdown)
@@ -22,18 +40,30 @@ def parse_canvas_object(obj: Any, workspace_root: Path) -> Dict[str, Any]:
     obj_type = type(obj).__name__
     module = type(obj).__module__
 
+    # Generate ID and timestamp for this item
+    canvas_id = item_id or generate_canvas_id()
+    created_at = datetime.now().isoformat()
+
+    # Base metadata that all items will have
+    def add_metadata(result: Dict) -> Dict:
+        result["id"] = canvas_id
+        result["created_at"] = created_at
+        if title:
+            result["title"] = title
+        return result
+
     # Ensure .canvas directory exists
     canvas_dir = workspace_root / ".canvas"
     canvas_dir.mkdir(exist_ok=True)
 
     # Pandas DataFrame - keep inline
     if module.startswith('pandas') and obj_type == 'DataFrame':
-        return {
+        return add_metadata({
             "type": "dataframe",
             "data": obj.to_dict('records'),
             "columns": list(obj.columns),
             "html": obj.to_html(index=False, classes="dataframe-table")
-        }
+        })
 
     # Matplotlib Figure - save to file
     elif module.startswith('matplotlib') and 'Figure' in obj_type:
@@ -50,11 +80,11 @@ def parse_canvas_object(obj: Any, workspace_root: Path) -> Dict[str, Any]:
         img_base64 = base64.b64encode(buf.read()).decode('utf-8')
         buf.close()
 
-        return {
+        return add_metadata({
             "type": "matplotlib",
             "file": filename,  # Relative to .canvas/ directory where canvas.md lives
             "data": img_base64  # Keep for current session rendering
-        }
+        })
 
     # Plotly Figure - save to file
     elif module.startswith('plotly') and 'Figure' in obj_type:
@@ -65,11 +95,11 @@ def parse_canvas_object(obj: Any, workspace_root: Path) -> Dict[str, Any]:
         plotly_data = json.loads(obj.to_json())
         filepath.write_text(json.dumps(plotly_data, indent=2))
 
-        return {
+        return add_metadata({
             "type": "plotly",
             "file": filename,  # Relative to .canvas/ directory where canvas.md lives
             "data": plotly_data  # Keep for current session rendering
-        }
+        })
 
     # PIL Image - save to file
     elif module.startswith('PIL') and 'Image' in obj_type:
@@ -86,11 +116,11 @@ def parse_canvas_object(obj: Any, workspace_root: Path) -> Dict[str, Any]:
         img_base64 = base64.b64encode(buf.read()).decode('utf-8')
         buf.close()
 
-        return {
+        return add_metadata({
             "type": "image",
             "file": filename,  # Relative to .canvas/ directory where canvas.md lives
             "data": img_base64  # Keep for current session rendering
-        }
+        })
 
     # Plotly dict format - save to file
     elif isinstance(obj, dict) and ('data' in obj or 'layout' in obj):
@@ -100,11 +130,11 @@ def parse_canvas_object(obj: Any, workspace_root: Path) -> Dict[str, Any]:
 
         filepath.write_text(json.dumps(obj, indent=2))
 
-        return {
+        return add_metadata({
             "type": "plotly",
             "file": filename,  # Relative to .canvas/ directory where canvas.md lives
             "data": obj  # Keep for current session rendering
-        }
+        })
 
     # Markdown string - check for Mermaid diagrams - keep inline
     elif isinstance(obj, str):
@@ -114,26 +144,26 @@ def parse_canvas_object(obj: Any, workspace_root: Path) -> Dict[str, Any]:
             match = re.search(r'```mermaid\s*\n?(.*?)```', obj, re.DOTALL | re.IGNORECASE)
             if match:
                 mermaid_code = match.group(1).strip()
-                return {
+                return add_metadata({
                     "type": "mermaid",
                     "data": mermaid_code
-                }
+                })
 
-        return {
+        return add_metadata({
             "type": "markdown",
             "data": obj
-        }
+        })
 
     # Unknown type - convert to string - keep inline
     else:
-        return {
+        return add_metadata({
             "type": "markdown",
             "data": f"```\n{str(obj)}\n```"
-        }
+        })
 
 
 def export_canvas_to_markdown(canvas_items: List[Dict], workspace_root: Path, output_path: str = None):
-    """Export canvas to markdown file with file references."""
+    """Export canvas to markdown file with file references and metadata."""
     # Ensure .canvas directory exists
     canvas_dir = workspace_root / ".canvas"
     canvas_dir.mkdir(exist_ok=True)
@@ -148,6 +178,16 @@ def export_canvas_to_markdown(canvas_items: List[Dict], workspace_root: Path, ou
 
     for i, parsed in enumerate(canvas_items):
         item_type = parsed.get("type", "unknown")
+        item_id = parsed.get("id", f"item_{i}")
+        created_at = parsed.get("created_at", "")
+
+        # Add item metadata as HTML comment (for reload)
+        metadata = {"id": item_id, "type": item_type}
+        if created_at:
+            metadata["created_at"] = created_at
+        if "title" in parsed:
+            metadata["title"] = parsed["title"]
+        lines.append(f"\n<!-- canvas-item: {json.dumps(metadata)} -->")
 
         # Add title if present
         if "title" in parsed:
@@ -188,7 +228,7 @@ def export_canvas_to_markdown(canvas_items: List[Dict], workspace_root: Path, ou
 
 
 def load_canvas_from_markdown(workspace_root: Path, markdown_path: str = None) -> List[Dict]:
-    """Load canvas from markdown file and referenced assets."""
+    """Load canvas from markdown file and referenced assets, preserving metadata."""
     if not markdown_path:
         markdown_path = workspace_root / ".canvas" / "canvas.md"
     else:
@@ -200,119 +240,193 @@ def load_canvas_from_markdown(workspace_root: Path, markdown_path: str = None) -
     content = markdown_path.read_text()
     canvas_items = []
 
-    # First, extract all code blocks to process them separately
+    # First, find all metadata comments to get item boundaries and metadata
+    metadata_pattern = r'<!-- canvas-item: ({.*?}) -->'
+    metadata_matches = list(re.finditer(metadata_pattern, content))
+
+    # If we have metadata comments, use them to parse items
+    if metadata_matches:
+        for i, match in enumerate(metadata_matches):
+            try:
+                metadata = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                metadata = {"id": generate_canvas_id()}
+
+            # Find the content between this metadata and the next (or end of file)
+            start = match.end()
+            if i + 1 < len(metadata_matches):
+                end = metadata_matches[i + 1].start()
+            else:
+                end = len(content)
+
+            item_content = content[start:end].strip()
+            item = _parse_item_content(item_content, metadata, markdown_path)
+            if item:
+                canvas_items.append(item)
+    else:
+        # Fallback: legacy parsing without metadata (backwards compatibility)
+        canvas_items = _parse_legacy_canvas(content, markdown_path)
+
+    return canvas_items
+
+
+def _parse_item_content(content: str, metadata: Dict, markdown_path: Path) -> Optional[Dict]:
+    """Parse a single item's content given its metadata."""
+    item_type = metadata.get("type", "markdown")
+    item = {
+        "id": metadata.get("id", generate_canvas_id()),
+        "type": item_type,
+    }
+    if "title" in metadata:
+        item["title"] = metadata["title"]
+    if "created_at" in metadata:
+        item["created_at"] = metadata["created_at"]
+
+    # Remove title heading if present (we already have it in metadata)
+    if "title" in metadata:
+        title_pattern = rf'^##\s*{re.escape(metadata["title"])}\s*\n?'
+        content = re.sub(title_pattern, '', content, count=1).strip()
+
+    if item_type == "mermaid":
+        match = re.search(r'```mermaid\s*\n(.*?)```', content, re.DOTALL | re.IGNORECASE)
+        if match:
+            item["data"] = match.group(1).strip()
+            return item
+
+    elif item_type == "plotly":
+        match = re.search(r'```plotly\s*\n([^\n]+)\n```', content)
+        if match:
+            file_ref = match.group(1).strip()
+            file_path = markdown_path.parent / file_ref
+            if file_path.exists():
+                item["file"] = file_ref
+                item["data"] = json.loads(file_path.read_text())
+                return item
+
+    elif item_type in ("matplotlib", "image"):
+        match = re.search(r'!\[.*?\]\(([^)]+)\)', content)
+        if match:
+            file_ref = match.group(1)
+            if not file_ref.startswith('data:'):
+                file_path = markdown_path.parent / file_ref
+                if file_path.exists():
+                    with open(file_path, 'rb') as f:
+                        item["data"] = base64.b64encode(f.read()).decode('utf-8')
+                    item["file"] = file_ref
+                    item["type"] = "image"  # Normalize type
+                    return item
+
+    elif item_type == "dataframe":
+        match = re.search(r'<table.*?</table>', content, re.DOTALL)
+        if match:
+            item["html"] = match.group(0)
+            return item
+
+    elif item_type == "markdown":
+        # Clean up the content
+        cleaned = content.strip()
+        if cleaned:
+            item["data"] = cleaned
+            return item
+
+    return None
+
+
+def _parse_legacy_canvas(content: str, markdown_path: Path) -> List[Dict]:
+    """Parse canvas without metadata comments (legacy format)."""
+    canvas_items = []
     code_blocks = []
 
     # Find all mermaid blocks
     for match in re.finditer(r'```mermaid\s*\n(.*?)```', content, re.DOTALL | re.IGNORECASE):
-        start, end = match.span()
         code_blocks.append({
             'type': 'mermaid',
-            'start': start,
-            'end': end,
+            'start': match.start(),
+            'end': match.end(),
             'content': match.group(1).strip()
         })
 
-    # Find all plotly blocks (supports both relative filenames and legacy .canvas/ paths)
+    # Find all plotly blocks
     for match in re.finditer(r'```plotly\s*\n([^\n]+)\n```', content, re.DOTALL):
-        start, end = match.span()
         code_blocks.append({
             'type': 'plotly_file',
-            'start': start,
-            'end': end,
+            'start': match.start(),
+            'end': match.end(),
             'content': match.group(1).strip()
         })
 
-    # Find all image references (supports both relative filenames and legacy .canvas/ paths)
+    # Find all image references
     for match in re.finditer(r'!\[.*?\]\(([^)]+)\)', content):
-        start, end = match.span()
         file_ref = match.group(1)
-        # Skip data: URLs (base64 embedded images)
         if not file_ref.startswith('data:'):
             code_blocks.append({
                 'type': 'image_file',
-                'start': start,
-                'end': end,
+                'start': match.start(),
+                'end': match.end(),
                 'content': file_ref
             })
 
     # Find all HTML tables
     for match in re.finditer(r'<table.*?</table>', content, re.DOTALL):
-        start, end = match.span()
         code_blocks.append({
             'type': 'table',
-            'start': start,
-            'end': end,
+            'start': match.start(),
+            'end': match.end(),
             'content': match.group(0)
         })
 
-    # Sort blocks by position
     code_blocks.sort(key=lambda x: x['start'])
 
-    # Process content in order
     last_pos = 0
     for block in code_blocks:
-        # Add any markdown content before this block
         if block['start'] > last_pos:
             markdown_text = content[last_pos:block['start']].strip()
-            # Clean up metadata lines but keep actual content
-            lines = markdown_text.split('\n')
-            filtered_lines = []
-            for line in lines:
-                # Skip only the exact metadata lines
-                if line.strip() in ['# Canvas Export', ''] or line.strip().startswith('*Generated:'):
-                    continue
-                filtered_lines.append(line)
-
-            cleaned_text = '\n'.join(filtered_lines).strip()
-            if cleaned_text:
+            lines = [l for l in markdown_text.split('\n')
+                     if l.strip() not in ['# Canvas Export', '']
+                     and not l.strip().startswith('*Generated:')
+                     and not l.strip().startswith('<!-- canvas-item:')]
+            cleaned = '\n'.join(lines).strip()
+            if cleaned:
                 canvas_items.append({
+                    "id": generate_canvas_id(),
                     "type": "markdown",
-                    "data": cleaned_text
+                    "data": cleaned
                 })
 
-        # Add the block itself
+        item = {"id": generate_canvas_id()}
         if block['type'] == 'mermaid':
-            canvas_items.append({
-                "type": "mermaid",
-                "data": block['content']
-            })
+            item["type"] = "mermaid"
+            item["data"] = block['content']
+            canvas_items.append(item)
         elif block['type'] == 'plotly_file':
-            file_ref = block['content']
-            file_path = markdown_path.parent / file_ref
+            file_path = markdown_path.parent / block['content']
             if file_path.exists():
-                plotly_data = json.loads(file_path.read_text())
-                canvas_items.append({
-                    "type": "plotly",
-                    "file": file_ref,
-                    "data": plotly_data
-                })
+                item["type"] = "plotly"
+                item["file"] = block['content']
+                item["data"] = json.loads(file_path.read_text())
+                canvas_items.append(item)
         elif block['type'] == 'image_file':
-            file_ref = block['content']
-            file_path = markdown_path.parent / file_ref
+            file_path = markdown_path.parent / block['content']
             if file_path.exists():
                 with open(file_path, 'rb') as f:
-                    img_base64 = base64.b64encode(f.read()).decode('utf-8')
-                canvas_items.append({
-                    "type": "image",
-                    "file": file_ref,
-                    "data": img_base64
-                })
+                    item["data"] = base64.b64encode(f.read()).decode('utf-8')
+                item["type"] = "image"
+                item["file"] = block['content']
+                canvas_items.append(item)
         elif block['type'] == 'table':
-            canvas_items.append({
-                "type": "dataframe",
-                "html": block['content']
-            })
+            item["type"] = "dataframe"
+            item["html"] = block['content']
+            canvas_items.append(item)
 
         last_pos = block['end']
 
-    # Add any remaining markdown after the last block
     if last_pos < len(content):
-        markdown_text = content[last_pos:].strip()
-        if markdown_text:
+        remaining = content[last_pos:].strip()
+        if remaining:
             canvas_items.append({
+                "id": generate_canvas_id(),
                 "type": "markdown",
-                "data": markdown_text
+                "data": remaining
             })
 
     return canvas_items

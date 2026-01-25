@@ -158,6 +158,7 @@ def run_app_cli(args):
         host=args.host,
         debug=args.debug,
         title=args.title,
+        welcome_message=args.welcome_message,
         config_file=args.config
     )
 
@@ -251,6 +252,12 @@ For more help: https://github.com/dkedar7/cowork-dash
         type=str,
         default="./config.py",
         help="Config file path (default: ./config.py)"
+    )
+    run_parser.add_argument(
+        "--welcome-message",
+        type=str,
+        dest="welcome_message",
+        help="Welcome message shown on startup (supports markdown)"
     )
 
     # Parse arguments

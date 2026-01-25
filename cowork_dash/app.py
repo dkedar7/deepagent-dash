@@ -201,6 +201,7 @@ APP_SUBTITLE = config.APP_SUBTITLE
 PORT = config.PORT
 HOST = config.HOST
 DEBUG = config.DEBUG
+WELCOME_MESSAGE = config.WELCOME_MESSAGE
 
 # Ensure workspace exists
 WORKSPACE_ROOT.mkdir(exist_ok=True, parents=True)
@@ -288,15 +289,24 @@ _agent_state = {
     "interrupt": None,  # Track interrupt requests for human-in-the-loop
     "last_update": time.time(),
     "start_time": None,  # Track when agent started for response time calculation
+    "stop_requested": False,  # Flag to request agent stop
 }
 _agent_state_lock = threading.Lock()
 
-def _run_agent_stream(message: str, resume_data: Dict = None):
+
+def request_agent_stop():
+    """Request the agent to stop execution."""
+    with _agent_state_lock:
+        _agent_state["stop_requested"] = True
+        _agent_state["last_update"] = time.time()
+
+def _run_agent_stream(message: str, resume_data: Dict = None, workspace_path: str = None):
     """Run agent in background thread and update global state in real-time.
 
     Args:
         message: User message to send to agent
         resume_data: Optional dict with 'decisions' to resume from interrupt
+        workspace_path: Current workspace directory path to inject into agent context
     """
     if not agent:
         with _agent_state_lock:
@@ -345,9 +355,24 @@ def _run_agent_stream(message: str, resume_data: Dict = None):
             from langgraph.types import Command
             agent_input = Command(resume=resume_data)
         else:
-            agent_input = {"messages": [{"role": "user", "content": message}]}
+            # Inject workspace context into the message if available
+            if workspace_path:
+                context_prefix = f"[Current working directory: {workspace_path}]\n\n"
+                message_with_context = context_prefix + message
+            else:
+                message_with_context = message
+            agent_input = {"messages": [{"role": "user", "content": message_with_context}]}
 
         for update in agent.stream(agent_input, stream_mode="updates", config=stream_config):
+            # Check if stop was requested
+            with _agent_state_lock:
+                if _agent_state.get("stop_requested"):
+                    _agent_state["response"] = _agent_state.get("response", "") + "\n\nAgent stopped by user."
+                    _agent_state["running"] = False
+                    _agent_state["stop_requested"] = False
+                    _agent_state["last_update"] = time.time()
+                    return
+
             # Check for interrupt
             if isinstance(update, dict) and "__interrupt__" in update:
                 interrupt_value = update["__interrupt__"]
@@ -476,6 +501,66 @@ def _run_agent_stream(message: str, resume_data: Dict = None):
                                             export_canvas_to_markdown(_agent_state["canvas"], WORKSPACE_ROOT)
                                         except Exception as e:
                                             print(f"Failed to export canvas: {e}")
+
+                                elif last_msg.name == 'update_canvas_item':
+                                    content = last_msg.content
+                                    # Parse the canvas item to update
+                                    if isinstance(content, str):
+                                        try:
+                                            canvas_item = json.loads(content)
+                                        except:
+                                            canvas_item = {"type": "markdown", "data": content}
+                                    elif isinstance(content, dict):
+                                        canvas_item = content
+                                    else:
+                                        canvas_item = {"type": "markdown", "data": str(content)}
+
+                                    item_id = canvas_item.get("id")
+                                    if item_id:
+                                        with _agent_state_lock:
+                                            # Find and replace the item with matching ID
+                                            for i, existing in enumerate(_agent_state["canvas"]):
+                                                if existing.get("id") == item_id:
+                                                    _agent_state["canvas"][i] = canvas_item
+                                                    break
+                                            else:
+                                                # If not found, append as new item
+                                                _agent_state["canvas"].append(canvas_item)
+                                            _agent_state["last_update"] = time.time()
+
+                                            # Export to markdown file
+                                            try:
+                                                export_canvas_to_markdown(_agent_state["canvas"], WORKSPACE_ROOT)
+                                            except Exception as e:
+                                                print(f"Failed to export canvas: {e}")
+
+                                elif last_msg.name == 'remove_canvas_item':
+                                    content = last_msg.content
+                                    # Parse to get the item ID to remove
+                                    if isinstance(content, str):
+                                        try:
+                                            parsed = json.loads(content)
+                                            item_id = parsed.get("id")
+                                        except:
+                                            item_id = content  # Assume string is the ID
+                                    elif isinstance(content, dict):
+                                        item_id = content.get("id")
+                                    else:
+                                        item_id = None
+
+                                    if item_id:
+                                        with _agent_state_lock:
+                                            _agent_state["canvas"] = [
+                                                item for item in _agent_state["canvas"]
+                                                if item.get("id") != item_id
+                                            ]
+                                            _agent_state["last_update"] = time.time()
+
+                                            # Export to markdown file
+                                            try:
+                                                export_canvas_to_markdown(_agent_state["canvas"], WORKSPACE_ROOT)
+                                            except Exception as e:
+                                                print(f"Failed to export canvas: {e}")
 
                                 elif last_msg.name in ('execute_cell', 'execute_all_cells'):
                                     # Extract canvas_items from cell execution results
@@ -643,12 +728,13 @@ def _process_interrupt(interrupt_value: Any) -> Dict[str, Any]:
 
     return interrupt_data
 
-def call_agent(message: str, resume_data: Dict = None):
+def call_agent(message: str, resume_data: Dict = None, workspace_path: str = None):
     """Start agent execution in background thread.
 
     Args:
         message: User message to send to agent
         resume_data: Optional dict with decisions to resume from interrupt
+        workspace_path: Current workspace directory path to inject into agent context
     """
     # Reset state but preserve canvas - do it all atomically
     with _agent_state_lock:
@@ -666,10 +752,11 @@ def call_agent(message: str, resume_data: Dict = None):
             "interrupt": None,  # Clear any previous interrupt
             "last_update": time.time(),
             "start_time": time.time(),  # Track when agent started
+            "stop_requested": False,  # Reset stop flag
         })
 
     # Start background thread
-    thread = threading.Thread(target=_run_agent_stream, args=(message, resume_data))
+    thread = threading.Thread(target=_run_agent_stream, args=(message, resume_data, workspace_path))
     thread.daemon = True
     thread.start()
 
@@ -788,7 +875,7 @@ app.index_string = '''<!DOCTYPE html>
     <head>
         {%metas%}
         <title>{%title%}</title>
-        <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+        <link rel="icon" type="image/svg+xml" href="/assets/favicon.ico">
         {%css%}
     </head>
     <body>
@@ -818,7 +905,8 @@ def create_layout():
         app_subtitle=subtitle,
         colors=COLORS,
         styles=STYLES,
-        agent=agent
+        agent=agent,
+        welcome_message=WELCOME_MESSAGE
     )
 
 # Set layout as a function so it uses current WORKSPACE_ROOT
@@ -871,10 +959,11 @@ def display_initial_messages(history, theme):
      Input("chat-input", "n_submit")],
     [State("chat-input", "value"),
      State("chat-history", "data"),
-     State("theme-store", "data")],
+     State("theme-store", "data"),
+     State("current-workspace-path", "data")],
     prevent_initial_call=True
 )
-def handle_send_immediate(n_clicks, n_submit, message, history, theme):
+def handle_send_immediate(n_clicks, n_submit, message, history, theme, current_workspace_path):
     """Phase 1: Immediately show user message and start agent."""
     if not message or not message.strip():
         raise PreventUpdate
@@ -903,8 +992,11 @@ def handle_send_immediate(n_clicks, n_submit, message, history, theme):
 
     messages.append(format_loading(colors))
 
-    # Start agent in background
-    call_agent(message)
+    # Calculate full workspace path for agent context
+    workspace_full_path = WORKSPACE_ROOT / current_workspace_path if current_workspace_path else WORKSPACE_ROOT
+
+    # Start agent in background with workspace context
+    call_agent(message, workspace_path=str(workspace_full_path))
 
     # Enable polling
     return messages, history, "", message, False
@@ -1054,6 +1146,72 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
         return messages, no_update, False
 
 
+# Stop button visibility - show when agent is running
+@app.callback(
+    Output("stop-btn", "style"),
+    Input("poll-interval", "n_intervals"),
+    prevent_initial_call=True
+)
+def update_stop_button_visibility(n_intervals):
+    """Show stop button when agent is running, hide otherwise."""
+    state = get_agent_state()
+    if state.get("running"):
+        return {}  # Show button (remove display:none)
+    else:
+        return {"display": "none"}  # Hide button
+
+
+# Stop button click handler
+@app.callback(
+    [Output("chat-messages", "children", allow_duplicate=True),
+     Output("poll-interval", "disabled", allow_duplicate=True)],
+    Input("stop-btn", "n_clicks"),
+    [State("chat-history", "data"),
+     State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def handle_stop_button(n_clicks, history, theme):
+    """Handle stop button click to stop agent execution."""
+    if not n_clicks:
+        raise PreventUpdate
+
+    colors = get_colors(theme or "light")
+    history = history or []
+
+    # Request the agent to stop
+    request_agent_stop()
+
+    # Render current messages with a stopping indicator
+    def render_history_messages(history):
+        messages = []
+        for i, msg in enumerate(history):
+            msg_response_time = msg.get("response_time") if msg["role"] == "assistant" else None
+            messages.append(format_message(msg["role"], msg["content"], colors, STYLES, is_new=False, response_time=msg_response_time))
+            if msg.get("tool_calls"):
+                tool_calls_block = format_tool_calls_inline(msg["tool_calls"], colors)
+                if tool_calls_block:
+                    messages.append(tool_calls_block)
+            if msg.get("todos"):
+                todos_block = format_todos_inline(msg["todos"], colors)
+                if todos_block:
+                    messages.append(todos_block)
+        return messages
+
+    messages = render_history_messages(history)
+
+    # Add stopping message
+    messages.append(html.Div([
+        html.Span("Stopping...", style={
+            "fontSize": "15px",
+            "fontWeight": "500",
+            "color": colors["warning"],
+        })
+    ], className="chat-message chat-message-loading", style={"padding": "12px 15px"}))
+
+    # Keep polling to detect when agent actually stops
+    return messages, False
+
+
 # Interrupt handling callbacks
 @app.callback(
     [Output("chat-messages", "children", allow_duplicate=True),
@@ -1132,13 +1290,14 @@ def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_
     return messages, False
 
 
-# Folder toggle callback
+# Folder toggle callback - triggered by clicking the expand icon
 @app.callback(
     [Output({"type": "folder-children", "path": ALL}, "style"),
      Output({"type": "folder-icon", "path": ALL}, "style"),
      Output({"type": "folder-children", "path": ALL}, "children")],
-    Input({"type": "folder-header", "path": ALL}, "n_clicks"),
-    [State({"type": "folder-header", "path": ALL}, "data-realpath"),
+    Input({"type": "folder-icon", "path": ALL}, "n_clicks"),
+    [State({"type": "folder-header", "path": ALL}, "id"),
+     State({"type": "folder-header", "path": ALL}, "data-realpath"),
      State({"type": "folder-children", "path": ALL}, "id"),
      State({"type": "folder-icon", "path": ALL}, "id"),
      State({"type": "folder-children", "path": ALL}, "style"),
@@ -1147,7 +1306,7 @@ def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_
      State("theme-store", "data")],
     prevent_initial_call=True
 )
-def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles, icon_styles, children_content, theme):
+def toggle_folder(n_clicks, header_ids, real_paths, children_ids, icon_ids, children_styles, icon_styles, children_content, theme):
     """Toggle folder expansion and lazy load contents if needed."""
     ctx = callback_context
     if not ctx.triggered or not any(n_clicks):
@@ -1162,17 +1321,13 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
     except:
         raise PreventUpdate
 
-    # Find the index of the clicked folder to get its real path
-    clicked_idx = None
-    for i, icon_id in enumerate(icon_ids):
-        if icon_id["path"] == clicked_path:
-            clicked_idx = i
-            break
+    # Build a mapping from folder path to real path using header_ids and real_paths
+    path_to_realpath = {}
+    for i, header_id in enumerate(header_ids):
+        if i < len(real_paths):
+            path_to_realpath[header_id["path"]] = real_paths[i]
 
-    if clicked_idx is None:
-        raise PreventUpdate
-
-    folder_rel_path = real_paths[clicked_idx] if clicked_idx < len(real_paths) else None
+    folder_rel_path = path_to_realpath.get(clicked_path)
     if not folder_rel_path:
         raise PreventUpdate
 
@@ -1201,7 +1356,7 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
                     try:
                         folder_items = load_folder_contents(folder_rel_path, WORKSPACE_ROOT)
                         loaded_content = render_file_tree(folder_items, colors, STYLES,
-                                                          level=folder_rel_path.count("/") + 1,
+                                                          level=folder_rel_path.count("/") + folder_rel_path.count("\\") + 1,
                                                           parent_path=folder_rel_path)
                         new_children_content.append(loaded_content if loaded_content else current_content)
                     except Exception as e:
@@ -1227,11 +1382,11 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
                 current_children_style = children_styles[children_idx] if children_idx < len(children_styles) else {"display": "none"}
                 is_expanded = current_children_style.get("display") != "none"
                 new_icon_styles.append({
-                    "marginRight": "8px",
+                    "marginRight": "5px",
                     "fontSize": "10px",
-                    "color": colors["text_muted"],
-                    "transition": "transform 0.2s",
+                    "transition": "transform 0.15s",
                     "display": "inline-block",
+                    "padding": "2px",
                     "transform": "rotate(0deg)" if is_expanded else "rotate(90deg)",
                 })
             else:
@@ -1240,6 +1395,129 @@ def toggle_folder(n_clicks, real_paths, children_ids, icon_ids, children_styles,
             new_icon_styles.append(current_icon_style)
 
     return new_children_styles, new_icon_styles, new_children_content
+
+
+# Enter folder callback - triggered by double-clicking folder name (changes workspace root)
+@app.callback(
+    [Output("current-workspace-path", "data"),
+     Output("workspace-breadcrumb", "children"),
+     Output("file-tree", "children", allow_duplicate=True)],
+    [Input({"type": "folder-select", "path": ALL}, "n_clicks"),
+     Input("breadcrumb-root", "n_clicks"),
+     Input({"type": "breadcrumb-segment", "index": ALL}, "n_clicks")],
+    [State({"type": "folder-select", "path": ALL}, "id"),
+     State({"type": "folder-select", "path": ALL}, "data-folderpath"),
+     State({"type": "folder-select", "path": ALL}, "n_clicks"),
+     State("current-workspace-path", "data"),
+     State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def enter_folder(folder_clicks, root_clicks, breadcrumb_clicks, folder_ids, folder_paths, prev_clicks, current_path, theme):
+    """Enter a folder (double-click) or navigate via breadcrumb."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    colors = get_colors(theme or "light")
+    triggered = ctx.triggered[0]["prop_id"]
+
+    new_path = current_path or ""
+
+    # Check if breadcrumb root was clicked
+    if "breadcrumb-root" in triggered:
+        new_path = ""
+    # Check if a breadcrumb segment was clicked
+    elif "breadcrumb-segment" in triggered:
+        try:
+            id_str = triggered.rsplit(".", 1)[0]
+            id_dict = json.loads(id_str)
+            segment_index = id_dict.get("index")
+            # Build path up to this segment
+            if current_path:
+                parts = current_path.split("/")
+                new_path = "/".join(parts[:segment_index + 1])
+            else:
+                new_path = ""
+        except:
+            raise PreventUpdate
+    # Check if a folder was double-clicked (n_clicks >= 2 and increased by 1)
+    elif "folder-select" in triggered:
+        try:
+            id_str = triggered.rsplit(".", 1)[0]
+            id_dict = json.loads(id_str)
+            clicked_path = id_dict.get("path")
+        except:
+            raise PreventUpdate
+
+        # Find the folder and check for double-click
+        for i, folder_id in enumerate(folder_ids):
+            if folder_id["path"] == clicked_path:
+                current_clicks = folder_clicks[i] if i < len(folder_clicks) else 0
+                previous_clicks = prev_clicks[i] if i < len(prev_clicks) else 0
+
+                # Only enter on double-click (clicks increased and is even number >= 2)
+                if current_clicks and current_clicks >= 2 and current_clicks % 2 == 0:
+                    folder_rel_path = folder_paths[i] if i < len(folder_paths) else ""
+                    # Combine with current workspace path
+                    if current_path:
+                        new_path = f"{current_path}/{folder_rel_path}"
+                    else:
+                        new_path = folder_rel_path
+                else:
+                    # Single click - don't change workspace
+                    raise PreventUpdate
+                break
+        else:
+            raise PreventUpdate
+    else:
+        raise PreventUpdate
+
+    # Build breadcrumb navigation
+    breadcrumb_children = [
+        html.Span([
+            DashIconify(icon="mdi:home", width=14, style={"marginRight": "4px"}),
+            "root"
+        ], id="breadcrumb-root", className="breadcrumb-item breadcrumb-clickable", style={
+            "display": "inline-flex",
+            "alignItems": "center",
+            "cursor": "pointer",
+            "padding": "2px 6px",
+            "borderRadius": "3px",
+        }),
+    ]
+
+    if new_path:
+        parts = new_path.split("/")
+        for i, part in enumerate(parts):
+            # Add separator
+            breadcrumb_children.append(
+                html.Span(" / ", className="breadcrumb-separator", style={
+                    "color": "var(--mantine-color-dimmed)",
+                    "margin": "0 2px",
+                })
+            )
+            # Add clickable segment
+            breadcrumb_children.append(
+                html.Span(part, id={"type": "breadcrumb-segment", "index": i},
+                    className="breadcrumb-item breadcrumb-clickable",
+                    style={
+                        "cursor": "pointer",
+                        "padding": "2px 6px",
+                        "borderRadius": "3px",
+                    }
+                )
+            )
+
+    # Calculate the actual workspace path
+    workspace_full_path = WORKSPACE_ROOT / new_path if new_path else WORKSPACE_ROOT
+
+    # Render new file tree
+    file_tree = render_file_tree(
+        build_file_tree(workspace_full_path, workspace_full_path),
+        colors, STYLES
+    )
+
+    return new_path, breadcrumb_children, file_tree
 
 
 # File click - open modal
@@ -1416,69 +1694,149 @@ def open_terminal(n_clicks):
     [Output("file-tree", "children"),
      Output("canvas-content", "children", allow_duplicate=True)],
     Input("refresh-btn", "n_clicks"),
-    [State("theme-store", "data")],
+    [State("current-workspace-path", "data"),
+     State("theme-store", "data"),
+     State("collapsed-canvas-items", "data")],
     prevent_initial_call=True
 )
-def refresh_sidebar(n_clicks, theme):
+def refresh_sidebar(n_clicks, current_workspace, theme, collapsed_ids):
     """Refresh both file tree and canvas content."""
     global _agent_state
     colors = get_colors(theme or "light")
+    collapsed_ids = collapsed_ids or []
 
-    # Refresh file tree
-    file_tree = render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
+    # Calculate current workspace directory
+    current_workspace_dir = WORKSPACE_ROOT / current_workspace if current_workspace else WORKSPACE_ROOT
 
-    # Refresh canvas by reloading from .canvas/canvas.md file
+    # Refresh file tree for current workspace
+    file_tree = render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES)
+
+    # Refresh canvas by reloading from .canvas/canvas.md file (always from original root)
     canvas_items = load_canvas_from_markdown(WORKSPACE_ROOT)
 
     # Update agent state with reloaded canvas
     with _agent_state_lock:
         _agent_state["canvas"] = canvas_items
 
-    # Render the canvas items
-    canvas_content = render_canvas_items(canvas_items, colors)
+    # Render the canvas items with preserved collapsed state
+    canvas_content = render_canvas_items(canvas_items, colors, collapsed_ids)
 
     return file_tree, canvas_content
 
 
-# File upload
+# File upload (sidebar button) - uploads to current workspace directory
 @app.callback(
-    [Output("upload-status", "children"),
-     Output("file-tree", "children", allow_duplicate=True)],
-    Input("file-upload", "contents"),
-    [State("file-upload", "filename"),
+    Output("file-tree", "children", allow_duplicate=True),
+    Input("file-upload-sidebar", "contents"),
+    [State("file-upload-sidebar", "filename"),
+     State("current-workspace-path", "data"),
      State("theme-store", "data")],
     prevent_initial_call=True
 )
-def handle_upload(contents, filenames, theme):
-    """Handle file uploads."""
+def handle_sidebar_upload(contents, filenames, current_workspace, theme):
+    """Handle file uploads from sidebar button to current workspace."""
     if not contents:
         raise PreventUpdate
 
     colors = get_colors(theme or "light")
-    uploaded = []
+    # Calculate current workspace directory
+    current_workspace_dir = WORKSPACE_ROOT / current_workspace if current_workspace else WORKSPACE_ROOT
+
     for content, filename in zip(contents, filenames):
         try:
             _, content_string = content.split(',')
             decoded = base64.b64decode(content_string)
-            file_path = WORKSPACE_ROOT / filename
+            file_path = current_workspace_dir / filename
             try:
                 file_path.write_text(decoded.decode('utf-8'))
             except UnicodeDecodeError:
                 file_path.write_bytes(decoded)
-            uploaded.append(filename)
         except Exception as e:
             print(f"Upload error: {e}")
 
-    if uploaded:
-        return f"Uploaded: {', '.join(uploaded)}", render_file_tree(build_file_tree(WORKSPACE_ROOT, WORKSPACE_ROOT), colors, STYLES)
-    return "Upload failed", no_update
+    return render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES)
+
+
+# Create folder modal - open
+@app.callback(
+    Output("create-folder-modal", "opened"),
+    [Input("create-folder-btn", "n_clicks"),
+     Input("cancel-folder-btn", "n_clicks"),
+     Input("confirm-folder-btn", "n_clicks")],
+    [State("create-folder-modal", "opened"),
+     State("new-folder-name", "value")],
+    prevent_initial_call=True
+)
+def toggle_create_folder_modal(open_clicks, cancel_clicks, confirm_clicks, is_open, folder_name):
+    """Open/close the create folder modal."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if trigger_id == "create-folder-btn":
+        return True
+    elif trigger_id == "cancel-folder-btn":
+        return False
+    elif trigger_id == "confirm-folder-btn":
+        # Close modal only if folder name is provided
+        if folder_name and folder_name.strip():
+            return False
+        return True  # Keep open if no name provided
+
+    return is_open
+
+
+# Create folder - action
+@app.callback(
+    [Output("file-tree", "children", allow_duplicate=True),
+     Output("create-folder-error", "children"),
+     Output("new-folder-name", "value")],
+    Input("confirm-folder-btn", "n_clicks"),
+    [State("new-folder-name", "value"),
+     State("current-workspace-path", "data"),
+     State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def create_folder(n_clicks, folder_name, current_workspace, theme):
+    """Create a new folder in the current workspace directory."""
+    if not n_clicks:
+        raise PreventUpdate
+
+    colors = get_colors(theme or "light")
+
+    if not folder_name or not folder_name.strip():
+        return no_update, "Please enter a folder name", no_update
+
+    folder_name = folder_name.strip()
+
+    # Validate folder name
+    invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+    if any(char in folder_name for char in invalid_chars):
+        return no_update, f"Folder name cannot contain: {' '.join(invalid_chars)}", no_update
+
+    # Calculate current workspace directory
+    current_workspace_dir = WORKSPACE_ROOT / current_workspace if current_workspace else WORKSPACE_ROOT
+    folder_path = current_workspace_dir / folder_name
+
+    if folder_path.exists():
+        return no_update, f"Folder '{folder_name}' already exists", no_update
+
+    try:
+        folder_path.mkdir(parents=True, exist_ok=False)
+        return render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES), "", ""
+    except Exception as e:
+        return no_update, f"Error creating folder: {e}", no_update
 
 
 # View toggle callbacks - using SegmentedControl
 @app.callback(
     [Output("files-view", "style"),
      Output("canvas-view", "style"),
-     Output("open-terminal-btn", "style")],
+     Output("open-terminal-btn", "style"),
+     Output("create-folder-btn", "style"),
+     Output("file-upload-sidebar", "style")],
     [Input("sidebar-view-toggle", "value")],
     prevent_initial_call=True
 )
@@ -1488,7 +1846,7 @@ def toggle_view(view_value):
         raise PreventUpdate
 
     if view_value == "canvas":
-        # Show canvas, hide files, hide terminal button (not relevant for canvas)
+        # Show canvas, hide files, hide file-related buttons
         return (
             {"flex": "1", "display": "none", "flexDirection": "column"},
             {
@@ -1498,10 +1856,12 @@ def toggle_view(view_value):
                 "flexDirection": "column",
                 "overflow": "hidden"
             },
-            {"display": "none"}  # Hide terminal button on canvas view
+            {"display": "none"},  # Hide terminal button
+            {"display": "none"},  # Hide create folder button
+            {"display": "none"},  # Hide file upload button
         )
     else:
-        # Show files, hide canvas, show terminal button
+        # Show files, hide canvas, show file-related buttons
         return (
             {
                 "flex": "1",
@@ -1517,7 +1877,9 @@ def toggle_view(view_value):
                 "flexDirection": "column",
                 "overflow": "hidden"
             },
-            {}  # Show terminal button (default styles)
+            {},  # Show terminal button (default styles)
+            {},  # Show create folder button (default styles)
+            {},  # Show file upload button (default styles)
         )
 
 
@@ -1526,78 +1888,274 @@ def toggle_view(view_value):
     Output("canvas-content", "children"),
     [Input("poll-interval", "n_intervals"),
      Input("sidebar-view-toggle", "value")],
-    [State("theme-store", "data")],
+    [State("theme-store", "data"),
+     State("collapsed-canvas-items", "data")],
     prevent_initial_call=False
 )
-def update_canvas_content(n_intervals, view_value, theme):
+def update_canvas_content(n_intervals, view_value, theme, collapsed_ids):
     """Update canvas content from agent state."""
     state = get_agent_state()
     canvas_items = state.get("canvas", [])
     colors = get_colors(theme or "light")
+    collapsed_ids = collapsed_ids or []
 
-    # Use imported rendering function
-    return render_canvas_items(canvas_items, colors)
+    # Use imported rendering function with preserved collapsed state
+    return render_canvas_items(canvas_items, colors, collapsed_ids)
 
 
 
-# Clear canvas callback
+# Open clear canvas confirmation modal
 @app.callback(
-    Output("canvas-content", "children", allow_duplicate=True),
+    Output("clear-canvas-modal", "opened"),
     Input("clear-canvas-btn", "n_clicks"),
+    prevent_initial_call=True
+)
+def open_clear_canvas_modal(n_clicks):
+    """Open the clear canvas confirmation modal."""
+    if not n_clicks:
+        raise PreventUpdate
+    return True
+
+
+# Handle clear canvas confirmation
+@app.callback(
+    [Output("canvas-content", "children", allow_duplicate=True),
+     Output("clear-canvas-modal", "opened", allow_duplicate=True),
+     Output("collapsed-canvas-items", "data", allow_duplicate=True)],
+    [Input("confirm-clear-canvas-btn", "n_clicks"),
+     Input("cancel-clear-canvas-btn", "n_clicks")],
     [State("theme-store", "data")],
     prevent_initial_call=True
 )
-def clear_canvas(n_clicks, theme):
-    """Clear the canvas and archive the .canvas folder with a timestamp."""
-    if not n_clicks:
+def handle_clear_canvas_confirmation(confirm_clicks, cancel_clicks, theme):
+    """Handle the clear canvas confirmation - either clear or cancel."""
+    ctx = callback_context
+    if not ctx.triggered:
         raise PreventUpdate
 
-    global _agent_state
-    colors = get_colors(theme or "light")
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if triggered_id == "cancel-clear-canvas-btn":
+        # Close modal without clearing
+        return no_update, False, no_update
 
-    # Archive .canvas folder if it exists (contains canvas.md and all assets)
-    canvas_dir = WORKSPACE_ROOT / ".canvas"
-    if canvas_dir.exists() and canvas_dir.is_dir():
-        try:
-            archive_dir = WORKSPACE_ROOT / f".canvas_{timestamp}"
-            shutil.move(str(canvas_dir), str(archive_dir))
-            print(f"Archived .canvas folder to {archive_dir}")
-        except Exception as e:
-            print(f"Failed to archive .canvas folder: {e}")
+    if triggered_id == "confirm-clear-canvas-btn":
+        if not confirm_clicks:
+            raise PreventUpdate
 
-    # Clear canvas in state
-    with _agent_state_lock:
-        _agent_state["canvas"] = []
+        global _agent_state
+        colors = get_colors(theme or "light")
 
-    # Return empty state
-    return html.Div([
-        html.Div("🗒", style={
-            "fontSize": "48px",
-            "textAlign": "center",
-            "marginBottom": "16px",
-            "opacity": "0.3"
-        }),
-        html.P("Canvas is empty", style={
-            "textAlign": "center",
-            "color": colors["text_muted"],
-            "fontSize": "14px"
-        }),
-        html.P("The agent will add visualizations, charts, and notes here", style={
-            "textAlign": "center",
-            "color": colors["text_muted"],
-            "fontSize": "12px",
-            "marginTop": "8px"
-        })
-    ], style={
-        "display": "flex",
-        "flexDirection": "column",
-        "alignItems": "center",
-        "justifyContent": "center",
-        "height": "100%",
-        "padding": "40px"
-    })
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Archive .canvas folder if it exists (contains canvas.md and all assets)
+        canvas_dir = WORKSPACE_ROOT / ".canvas"
+        if canvas_dir.exists() and canvas_dir.is_dir():
+            try:
+                archive_dir = WORKSPACE_ROOT / f".canvas_{timestamp}"
+                shutil.move(str(canvas_dir), str(archive_dir))
+                print(f"Archived .canvas folder to {archive_dir}")
+            except Exception as e:
+                print(f"Failed to archive .canvas folder: {e}")
+
+        # Clear canvas in state
+        with _agent_state_lock:
+            _agent_state["canvas"] = []
+
+        # Return empty state, close modal, and clear collapsed items
+        return html.Div([
+            html.Div("🗒", style={
+                "fontSize": "48px",
+                "textAlign": "center",
+                "marginBottom": "16px",
+                "opacity": "0.3"
+            }),
+            html.P("Canvas is empty", style={
+                "textAlign": "center",
+                "color": colors["text_muted"],
+                "fontSize": "14px"
+            }),
+            html.P("The agent will add visualizations, charts, and notes here", style={
+                "textAlign": "center",
+                "color": colors["text_muted"],
+                "fontSize": "12px",
+                "marginTop": "8px"
+            })
+        ], style={
+            "display": "flex",
+            "flexDirection": "column",
+            "alignItems": "center",
+            "justifyContent": "center",
+            "height": "100%",
+            "padding": "40px"
+        }), False, []
+
+    raise PreventUpdate
+
+
+# Collapse/expand canvas item callback
+@app.callback(
+    [Output({"type": "canvas-item-content", "index": ALL}, "style"),
+     Output({"type": "canvas-collapse-btn", "index": ALL}, "children"),
+     Output("collapsed-canvas-items", "data")],
+    Input({"type": "canvas-collapse-btn", "index": ALL}, "n_clicks"),
+    [State({"type": "canvas-collapse-btn", "index": ALL}, "id"),
+     State({"type": "canvas-item-content", "index": ALL}, "style"),
+     State({"type": "canvas-item-content", "index": ALL}, "id"),
+     State("collapsed-canvas-items", "data")],
+    prevent_initial_call=True
+)
+def toggle_canvas_item_collapse(all_clicks, btn_ids, content_styles, content_ids, collapsed_ids):
+    """Toggle collapse/expand state of a canvas item."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    # Find which button was clicked
+    triggered = ctx.triggered[0]
+    triggered_id = triggered["prop_id"]
+    triggered_value = triggered.get("value")
+
+    if not triggered_value or triggered_value <= 0:
+        raise PreventUpdate
+
+    try:
+        id_str = triggered_id.rsplit(".", 1)[0]
+        id_dict = json.loads(id_str)
+        clicked_item_id = id_dict.get("index")
+    except:
+        raise PreventUpdate
+
+    if not clicked_item_id:
+        raise PreventUpdate
+
+    # Initialize collapsed_ids if None
+    collapsed_ids = collapsed_ids or []
+
+    # Build new styles and icons for all items
+    new_styles = []
+    new_icons = []
+    new_collapsed_ids = collapsed_ids.copy()
+
+    for i, content_id in enumerate(content_ids):
+        item_id = content_id.get("index")
+        current_style = content_styles[i] if i < len(content_styles) else {"display": "block"}
+
+        if item_id == clicked_item_id:
+            # Toggle this item
+            is_collapsed = current_style.get("display") == "none"
+            new_styles.append({"display": "block"} if is_collapsed else {"display": "none"})
+            # Change icon based on new state
+            new_icons.append(
+                DashIconify(icon="mdi:chevron-down" if is_collapsed else "mdi:chevron-right", width=16)
+            )
+            # Update collapsed_ids list
+            if is_collapsed:
+                # Was collapsed, now expanding - remove from list
+                if item_id in new_collapsed_ids:
+                    new_collapsed_ids.remove(item_id)
+            else:
+                # Was expanded, now collapsing - add to list
+                if item_id not in new_collapsed_ids:
+                    new_collapsed_ids.append(item_id)
+        else:
+            new_styles.append(current_style)
+            # Keep existing icon state
+            is_collapsed = current_style.get("display") == "none"
+            new_icons.append(
+                DashIconify(icon="mdi:chevron-right" if is_collapsed else "mdi:chevron-down", width=16)
+            )
+
+    return new_styles, new_icons, new_collapsed_ids
+
+
+# Open delete confirmation modal
+@app.callback(
+    [Output("delete-canvas-item-modal", "opened"),
+     Output("delete-canvas-item-id", "data")],
+    Input({"type": "canvas-delete-btn", "index": ALL}, "n_clicks"),
+    [State({"type": "canvas-delete-btn", "index": ALL}, "id")],
+    prevent_initial_call=True
+)
+def open_delete_confirmation(all_clicks, all_ids):
+    """Open the delete confirmation modal when delete button is clicked."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    triggered = ctx.triggered[0]
+    triggered_id = triggered["prop_id"]
+    triggered_value = triggered.get("value")
+
+    if not triggered_value or triggered_value <= 0:
+        raise PreventUpdate
+
+    try:
+        id_str = triggered_id.rsplit(".", 1)[0]
+        id_dict = json.loads(id_str)
+        item_id_to_delete = id_dict.get("index")
+    except:
+        raise PreventUpdate
+
+    if not item_id_to_delete:
+        raise PreventUpdate
+
+    return True, item_id_to_delete
+
+
+# Handle delete confirmation modal actions
+@app.callback(
+    [Output("canvas-content", "children", allow_duplicate=True),
+     Output("delete-canvas-item-modal", "opened", allow_duplicate=True),
+     Output("collapsed-canvas-items", "data", allow_duplicate=True)],
+    [Input("confirm-delete-canvas-btn", "n_clicks"),
+     Input("cancel-delete-canvas-btn", "n_clicks")],
+    [State("delete-canvas-item-id", "data"),
+     State("theme-store", "data"),
+     State("collapsed-canvas-items", "data")],
+    prevent_initial_call=True
+)
+def handle_delete_confirmation(confirm_clicks, cancel_clicks, item_id, theme, collapsed_ids):
+    """Handle the delete confirmation - either delete or cancel."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if triggered_id == "cancel-delete-canvas-btn":
+        # Close modal without deleting
+        return no_update, False, no_update
+
+    if triggered_id == "confirm-delete-canvas-btn":
+        if not confirm_clicks or not item_id:
+            raise PreventUpdate
+
+        global _agent_state
+        colors = get_colors(theme or "light")
+        collapsed_ids = collapsed_ids or []
+
+        # Remove the item from canvas
+        with _agent_state_lock:
+            _agent_state["canvas"] = [
+                item for item in _agent_state["canvas"]
+                if item.get("id") != item_id
+            ]
+            canvas_items = _agent_state["canvas"].copy()
+
+            # Export updated canvas to markdown file
+            try:
+                export_canvas_to_markdown(canvas_items, WORKSPACE_ROOT)
+            except Exception as e:
+                print(f"Failed to export canvas after delete: {e}")
+
+        # Remove deleted item from collapsed_ids if present
+        new_collapsed_ids = [cid for cid in collapsed_ids if cid != item_id]
+
+        # Render updated canvas with preserved collapsed state and close modal
+        return render_canvas_items(canvas_items, colors, new_collapsed_ids), False, new_collapsed_ids
+
+    raise PreventUpdate
 
 
 # =============================================================================
@@ -1662,6 +2220,7 @@ def run_app(
     debug=None,
     title=None,
     subtitle=None,
+    welcome_message=None,
     config_file=None
 ):
     """
@@ -1682,6 +2241,7 @@ def run_app(
         debug (bool, optional): Debug mode
         title (str, optional): Application title
         subtitle (str, optional): Application subtitle
+        welcome_message (str, optional): Welcome message shown on startup (supports markdown)
         config_file (str, optional): Path to config file (default: ./config.py)
 
     Returns:
@@ -1702,7 +2262,7 @@ def run_app(
         >>> # Without agent (manual mode)
         >>> run_app(workspace="~/my-workspace", debug=True)
     """
-    global WORKSPACE_ROOT, APP_TITLE, APP_SUBTITLE, PORT, HOST, DEBUG, agent, AGENT_ERROR, args
+    global WORKSPACE_ROOT, APP_TITLE, APP_SUBTITLE, PORT, HOST, DEBUG, WELCOME_MESSAGE, agent, AGENT_ERROR, args
 
     # Load config file if specified and exists
     config_module = None
@@ -1727,6 +2287,7 @@ def run_app(
         PORT = port if port is not None else getattr(config_module, "PORT", config.PORT)
         HOST = host if host else getattr(config_module, "HOST", config.HOST)
         DEBUG = debug if debug is not None else getattr(config_module, "DEBUG", config.DEBUG)
+        WELCOME_MESSAGE = welcome_message if welcome_message else getattr(config_module, "WELCOME_MESSAGE", config.WELCOME_MESSAGE)
 
         # Agent priority: agent_spec > agent_instance > config file
         if agent_spec:
@@ -1757,6 +2318,7 @@ def run_app(
         PORT = port if port is not None else config.PORT
         HOST = host if host else config.HOST
         DEBUG = debug if debug is not None else config.DEBUG
+        WELCOME_MESSAGE = welcome_message if welcome_message else config.WELCOME_MESSAGE
 
         # Agent priority: agent_spec > agent_instance > config default
         if agent_spec:

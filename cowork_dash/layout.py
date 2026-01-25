@@ -5,9 +5,10 @@ import dash_mantine_components as dmc
 from dash_iconify import DashIconify
 
 from .file_utils import build_file_tree, render_file_tree
+from .config import WELCOME_MESSAGE as DEFAULT_WELCOME_MESSAGE
 
 
-def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent):
+def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent, welcome_message=None):
     """
     Create the app layout with current configuration.
 
@@ -18,10 +19,14 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
         colors: Color scheme dictionary
         styles: Styles dictionary
         agent: Agent instance (or None)
+        welcome_message: Optional welcome message (uses default if not provided)
 
     Returns:
         Dash layout component
     """
+    # Use provided welcome message or fall back to default
+    message = welcome_message if welcome_message is not None else DEFAULT_WELCOME_MESSAGE
+
     return dmc.MantineProvider(
         id="mantine-provider",
         forceColorScheme="light",
@@ -29,20 +34,15 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
             # State stores
             dcc.Store(id="chat-history", data=[{
                 "role": "assistant",
-                "content": f"""This is your AI-powered workspace. I can help you write code, analyze files, create visualizations, and more.
-
-**Getting Started:**
-- Type a message below to chat with me
-- Browse files on the right (click to view, ↓ to download)
-- Switch to **Canvas** tab to see charts and diagrams I create
-
-Let's get started!"""
+                "content": message
             }]),
             dcc.Store(id="pending-message", data=None),
             dcc.Store(id="expanded-folders", data=[]),
             dcc.Store(id="file-to-view", data=None),
             dcc.Store(id="file-click-tracker", data={}),
             dcc.Store(id="theme-store", data="light", storage_type="local"),
+            dcc.Store(id="current-workspace-path", data=""),  # Relative path from original workspace root
+            dcc.Store(id="collapsed-canvas-items", data=[]),  # Track which canvas items are collapsed
             dcc.Download(id="file-download"),
 
             # Interval for polling agent updates (disabled by default)
@@ -64,6 +64,62 @@ Let's get started!"""
                             style={"marginTop": "16px"}
                         )
                     ], style={"textAlign": "right"})
+                ],
+                opened=False,
+            ),
+
+            # Create folder modal
+            dmc.Modal(
+                id="create-folder-modal",
+                title="Create New Folder",
+                size="sm",
+                children=[
+                    dmc.TextInput(
+                        id="new-folder-name",
+                        label="Folder name",
+                        placeholder="Enter folder name",
+                        style={"marginBottom": "16px"},
+                    ),
+                    dmc.Text(id="create-folder-error", c="red", size="sm", style={"marginBottom": "8px"}),
+                    dmc.Group([
+                        dmc.Button("Cancel", id="cancel-folder-btn", variant="outline", color="gray"),
+                        dmc.Button("Create", id="confirm-folder-btn", color="blue"),
+                    ], justify="flex-end"),
+                ],
+                opened=False,
+            ),
+
+            # Delete canvas item confirmation modal
+            dmc.Modal(
+                id="delete-canvas-item-modal",
+                title="Delete Canvas Item",
+                size="sm",
+                children=[
+                    dmc.Text("Are you sure you want to delete this canvas item? This action cannot be undone.",
+                             size="sm", style={"marginBottom": "16px"}),
+                    dmc.Group([
+                        dmc.Button("Cancel", id="cancel-delete-canvas-btn", variant="outline", color="gray"),
+                        dmc.Button("Delete", id="confirm-delete-canvas-btn", color="red"),
+                    ], justify="flex-end"),
+                ],
+                opened=False,
+            ),
+
+            # Store for canvas item ID pending deletion
+            dcc.Store(id="delete-canvas-item-id", data=None),
+
+            # Clear canvas confirmation modal
+            dmc.Modal(
+                id="clear-canvas-modal",
+                title="Clear Canvas",
+                size="sm",
+                children=[
+                    dmc.Text("Are you sure you want to clear the entire canvas? The current canvas will be archived with a timestamp.",
+                             size="sm", style={"marginBottom": "16px"}),
+                    dmc.Group([
+                        dmc.Button("Cancel", id="cancel-clear-canvas-btn", variant="outline", color="gray"),
+                        dmc.Button("Clear", id="confirm-clear-canvas-btn", color="red"),
+                    ], justify="flex-end"),
                 ],
                 opened=False,
             ),
@@ -121,17 +177,6 @@ Let's get started!"""
 
                     # Compact Input
                     html.Div([
-                        dcc.Upload(
-                            id="file-upload",
-                            children=dmc.ActionIcon(
-                                DashIconify(icon="radix-icons:plus", width=18),
-                                id="upload-plus",
-                                variant="default",
-                                size="md",
-                            ),
-                            style={"cursor": "pointer"},
-                            multiple=True
-                        ),
                         dmc.TextInput(
                             id="chat-input",
                             placeholder="Type a message...",
@@ -140,13 +185,19 @@ Let's get started!"""
                             size="md",
                         ),
                         dmc.Button("Send", id="send-btn", className="send-btn", size="md"),
+                        dmc.ActionIcon(
+                            DashIconify(icon="mdi:stop", width=20),
+                            id="stop-btn",
+                            variant="filled",
+                            color="red",
+                            size="lg",
+                            radius="sm",
+                            style={"display": "none"},  # Hidden by default, shown when agent is running
+                        ),
                     ], id="chat-input-area", style={
                         "display": "flex", "gap": "8px", "padding": "10px 15px",
                         "borderTop": "1px solid var(--mantine-color-default-border)",
                         "background": "var(--mantine-color-body)",
-                    }),
-                    dmc.Text(id="upload-status", size="sm", c="dimmed", style={
-                        "padding": "0 15px 8px",
                     }),
                 ], id="chat-panel", style={
                     "flex": "1", "display": "flex", "flexDirection": "column",
@@ -176,6 +227,22 @@ Let's get started!"""
                         ),
                         dmc.Group([
                             dmc.ActionIcon(
+                                DashIconify(icon="mdi:folder-plus-outline", width=18),
+                                id="create-folder-btn",
+                                variant="default",
+                                size="md",
+                            ),
+                            dcc.Upload(
+                                id="file-upload-sidebar",
+                                children=dmc.ActionIcon(
+                                    DashIconify(icon="mdi:file-upload-outline", width=18),
+                                    id="upload-btn",
+                                    variant="default",
+                                    size="md",
+                                ),
+                                multiple=True,
+                            ),
+                            dmc.ActionIcon(
                                 DashIconify(icon="mdi:console", width=18),
                                 id="open-terminal-btn",
                                 variant="default",
@@ -196,6 +263,31 @@ Let's get started!"""
 
                     # Files view
                     html.Div([
+                        # Workspace path breadcrumb navigation
+                        html.Div([
+                            html.Div(id="workspace-breadcrumb", children=[
+                                html.Span([
+                                    DashIconify(icon="mdi:home", width=14, style={"marginRight": "4px"}),
+                                    "root"
+                                ], id="breadcrumb-root", className="breadcrumb-item breadcrumb-clickable", style={
+                                    "display": "inline-flex",
+                                    "alignItems": "center",
+                                    "cursor": "pointer",
+                                    "padding": "2px 6px",
+                                    "borderRadius": "3px",
+                                }),
+                            ], style={
+                                "display": "flex",
+                                "alignItems": "center",
+                                "flexWrap": "wrap",
+                                "gap": "2px",
+                                "fontSize": "13px",
+                            }),
+                        ], className="breadcrumb-bar", style={
+                            "padding": "6px 10px",
+                            "borderBottom": "1px solid var(--mantine-color-default-border)",
+                            "background": "var(--mantine-color-gray-0)",
+                        }),
                         html.Div(
                             id="file-tree",
                             children=render_file_tree(build_file_tree(workspace_root, workspace_root), colors, styles),

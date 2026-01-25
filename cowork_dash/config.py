@@ -94,3 +94,16 @@ DEBUG = get_config(
     default=False,
     type_cast=lambda x: str(x).lower() in ("true", "1", "yes")
 )
+
+# Welcome message shown when the app starts
+# Environment variable: DEEPAGENT_WELCOME_MESSAGE
+# Supports markdown formatting
+_default_welcome = """This is your AI-powered workspace. I can help you write code, analyze files, create visualizations, and more.
+
+**Getting Started:**
+- Type a message below to chat with me
+- Browse files on the right (click to view, ↓ to download)
+- Switch to **Canvas** tab to see charts and diagrams I create
+
+Let's get started!"""
+WELCOME_MESSAGE = get_config("welcome_message", default=_default_welcome)

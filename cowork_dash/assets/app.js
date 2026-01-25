@@ -8,6 +8,11 @@
                 securityLevel: 'loose',
                 logLevel: 'error'
             });
+            // Clear processed flag so diagrams re-render with new theme
+            const mermaidDivs = document.querySelectorAll('.mermaid-diagram');
+            mermaidDivs.forEach(function(div) {
+                div.removeAttribute('data-processed');
+            });
             // Re-render any existing mermaid diagrams
             renderMermaid();
         }
@@ -57,7 +62,13 @@ async function renderMermaid() {
 
     for (const div of mermaidDivs) {
         if (!div.getAttribute('data-processed')) {
-            const code = div.textContent.trim();
+            // Get code from stored attribute (for re-renders) or from textContent (first render)
+            let code = div.getAttribute('data-mermaid-code');
+            if (!code) {
+                code = div.textContent.trim();
+                // Store original code for future re-renders (theme changes)
+                div.setAttribute('data-mermaid-code', code);
+            }
             div.setAttribute('data-processed', 'true');
 
             try {

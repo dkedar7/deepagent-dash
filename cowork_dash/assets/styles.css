@@ -118,6 +118,41 @@ details summary:hover {
     padding: 0;
 }
 
+/* Breadcrumb navigation styles */
+.breadcrumb-bar {
+    background: var(--mantine-color-gray-0);
+}
+.breadcrumb-item {
+    transition: background 0.15s ease;
+}
+.breadcrumb-clickable:hover {
+    background: var(--mantine-color-blue-light) !important;
+}
+.breadcrumb-separator {
+    user-select: none;
+}
+[data-mantine-color-scheme="dark"] .breadcrumb-bar {
+    background: var(--mantine-color-dark-6) !important;
+}
+
+/* Folder selection styles */
+.folder-select-target {
+    transition: background 0.15s ease;
+}
+
+.folder-expand-toggle {
+    opacity: 0.6;
+    transition: opacity 0.15s ease;
+}
+.folder-expand-toggle:hover {
+    opacity: 1;
+}
+
+/* Dark mode - breadcrumb */
+[data-mantine-color-scheme="dark"] .breadcrumb-clickable:hover {
+    background: var(--mantine-color-dark-5) !important;
+}
+
 /* Dark mode - input/summary/chat */
 [data-mantine-color-scheme="dark"] .file-item:hover { background: var(--mantine-color-dark-5) !important; }
 [data-mantine-color-scheme="dark"] .folder-header:hover { background: var(--mantine-color-dark-5) !important; }
@@ -127,8 +162,17 @@ details summary:hover {
 [data-mantine-color-scheme="dark"] #chat-messages h2,
 [data-mantine-color-scheme="dark"] #chat-messages h3 { color: var(--mantine-color-dark-0); }
 [data-mantine-color-scheme="dark"] #chat-messages strong { color: var(--mantine-color-dark-0); }
-[data-mantine-color-scheme="dark"] #chat-messages code { background: var(--mantine-color-dark-6); }
-[data-mantine-color-scheme="dark"] #chat-messages pre { background: var(--mantine-color-dark-6); }
+[data-mantine-color-scheme="dark"] #chat-messages code {
+    background: var(--mantine-color-dark-6);
+    color: var(--mantine-color-dark-0);
+}
+[data-mantine-color-scheme="dark"] #chat-messages pre {
+    background: var(--mantine-color-dark-6);
+    color: var(--mantine-color-dark-0);
+}
+[data-mantine-color-scheme="dark"] #chat-messages pre code {
+    color: var(--mantine-color-dark-0);
+}
 
 /* DMC Theme Integration */
 :root {
@@ -746,6 +790,104 @@ details summary:hover {
 
 [data-mantine-color-scheme="dark"] .canvas-code {
     color: var(--mantine-color-dark-1);
+}
+
+/* Canvas Item Container with Header - New Enhanced Layout */
+.canvas-item-container {
+    background: var(--mantine-color-body);
+    border: 1px solid var(--mantine-color-gray-3);
+    border-radius: 6px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    transition: box-shadow 0.15s ease;
+}
+
+.canvas-item-container:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.canvas-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--mantine-color-gray-2);
+    background: var(--mantine-color-gray-0);
+}
+
+.canvas-item-title-text {
+    color: var(--mantine-color-text);
+}
+
+.canvas-item-time {
+    font-size: 11px;
+}
+
+.canvas-item-content {
+    padding: 12px;
+}
+
+.canvas-collapse-btn {
+    opacity: 0.6;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.canvas-collapse-btn:hover {
+    opacity: 1;
+}
+
+.canvas-delete-btn {
+    opacity: 0.4;
+    transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.canvas-delete-btn:hover {
+    opacity: 1;
+    color: var(--mantine-color-red-6) !important;
+}
+
+.canvas-item-content-wrapper {
+    transition: max-height 0.2s ease-out;
+    overflow: hidden;
+}
+
+/* Dark mode canvas container */
+[data-mantine-color-scheme="dark"] .canvas-item-container {
+    background: var(--mantine-color-dark-6);
+    border-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-item-container:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-item-header {
+    background: var(--mantine-color-dark-7);
+    border-bottom-color: var(--mantine-color-dark-4);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-item-title-text {
+    color: var(--mantine-color-dark-0);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-item-time {
+    color: var(--mantine-color-dark-2);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-collapse-btn {
+    color: var(--mantine-color-dark-2);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-collapse-btn:hover {
+    color: var(--mantine-color-dark-0);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-delete-btn {
+    color: var(--mantine-color-dark-3);
+}
+
+[data-mantine-color-scheme="dark"] .canvas-delete-btn:hover {
+    color: var(--mantine-color-red-4) !important;
 }
 
 /* ============================================
