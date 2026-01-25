@@ -4,6 +4,7 @@ import sys
 import json
 import base64
 import re
+import copy
 import shutil
 import platform
 import subprocess
@@ -850,9 +851,36 @@ def resume_agent_from_interrupt(decision: str, action: str = "approve", action_r
     thread.start()
 
 def get_agent_state() -> Dict[str, Any]:
-    """Get current agent state (thread-safe)."""
+    """Get current agent state (thread-safe).
+
+    Returns a deep copy of mutable collections to prevent race conditions.
+    """
     with _agent_state_lock:
-        return _agent_state.copy()
+        state = _agent_state.copy()
+        # Deep copy mutable collections to prevent race conditions during rendering
+        state["tool_calls"] = copy.deepcopy(_agent_state["tool_calls"])
+        state["todos"] = copy.deepcopy(_agent_state["todos"])
+        state["canvas"] = copy.deepcopy(_agent_state["canvas"])
+        return state
+
+def reset_agent_state():
+    """Reset agent state for a fresh session (thread-safe).
+
+    Called on page load to ensure clean state after browser refresh.
+    Preserves canvas items loaded from canvas.md.
+    """
+    with _agent_state_lock:
+        _agent_state["running"] = False
+        _agent_state["thinking"] = ""
+        _agent_state["todos"] = []
+        _agent_state["tool_calls"] = []
+        _agent_state["response"] = ""
+        _agent_state["error"] = None
+        _agent_state["interrupt"] = None
+        _agent_state["start_time"] = None
+        _agent_state["stop_requested"] = False
+        _agent_state["last_update"] = time.time()
+        # Note: canvas is preserved - it's loaded from canvas.md on startup
 
 # =============================================================================
 # DASH APP
@@ -921,15 +949,32 @@ app.layout = create_layout
 
 # Initial message display
 @app.callback(
-    Output("chat-messages", "children"),
+    [Output("chat-messages", "children"),
+     Output("skip-history-render", "data", allow_duplicate=True),
+     Output("session-initialized", "data", allow_duplicate=True)],
     [Input("chat-history", "data")],
-    [State("theme-store", "data")],
-    prevent_initial_call=False
+    [State("theme-store", "data"),
+     State("skip-history-render", "data"),
+     State("session-initialized", "data")],
+    prevent_initial_call="initial_duplicate"
 )
-def display_initial_messages(history, theme):
-    """Display initial welcome message or chat history."""
+def display_initial_messages(history, theme, skip_render, session_initialized):
+    """Display initial welcome message or chat history.
+
+    On first call (page load), resets agent state for a fresh session.
+    Skip rendering if skip_render flag is set - this prevents duplicate renders
+    when poll_agent_updates already handles the rendering.
+    """
+    # Reset agent state on page load (first callback trigger)
+    if not session_initialized:
+        reset_agent_state()
+
+    # Skip if flag is set (poll_agent_updates already rendered)
+    if skip_render:
+        return no_update, False, True  # Reset skip flag, mark session initialized
+
     if not history:
-        return []
+        return [], False, True
 
     colors = get_colors(theme or "light")
     messages = []
@@ -946,7 +991,7 @@ def display_initial_messages(history, theme):
             todos_block = format_todos_inline(msg["todos"], colors)
             if todos_block:
                 messages.append(todos_block)
-    return messages
+    return messages, False, True
 
 # Chat callbacks
 @app.callback(
@@ -1005,7 +1050,8 @@ def handle_send_immediate(n_clicks, n_submit, message, history, theme, current_w
 @app.callback(
     [Output("chat-messages", "children", allow_duplicate=True),
      Output("chat-history", "data", allow_duplicate=True),
-     Output("poll-interval", "disabled", allow_duplicate=True)],
+     Output("poll-interval", "disabled", allow_duplicate=True),
+     Output("skip-history-render", "data", allow_duplicate=True)],
     Input("poll-interval", "n_intervals"),
     [State("chat-history", "data"),
      State("pending-message", "data"),
@@ -1069,7 +1115,7 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
             messages.append(interrupt_block)
 
         # Disable polling - wait for user to respond to interrupt
-        return messages, no_update, True
+        return messages, no_update, True, no_update
 
     # Check if agent is done
     if not state["running"]:
@@ -1115,8 +1161,8 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
                 if todos_block:
                     final_messages.append(todos_block)
 
-        # Disable polling
-        return final_messages, history, True
+        # Disable polling, set skip flag to prevent display_initial_messages from re-rendering
+        return final_messages, history, True, True
     else:
         # Agent still running - show loading with current thinking/tool_calls/todos
         messages = render_history_messages(history)
@@ -1142,8 +1188,8 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
         # Add loading indicator
         messages.append(format_loading(colors))
 
-        # Continue polling
-        return messages, no_update, False
+        # Continue polling, no skip flag needed
+        return messages, no_update, False, no_update
 
 
 # Stop button visibility - show when agent is running

@@ -37,6 +37,8 @@ def create_layout(workspace_root, app_title, app_subtitle, colors, styles, agent
                 "content": message
             }]),
             dcc.Store(id="pending-message", data=None),
+            dcc.Store(id="skip-history-render", data=False),  # Flag to skip display_initial_messages render
+            dcc.Store(id="session-initialized", data=False),  # Flag to track if session has been initialized
             dcc.Store(id="expanded-folders", data=[]),
             dcc.Store(id="file-to-view", data=None),
             dcc.Store(id="file-click-tracker", data={}),
