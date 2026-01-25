@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-01-24
+
+### Added
+- Stop button to halt agent execution mid-run
+- Clear canvas confirmation modal with archive functionality
+- Canvas item collapse/expand and delete features
+- Folder selection and creation in file browser
+- Double-click folders to change working directory
+- Demo video and screenshots in README
+
+### Changed
+- Default agent workspace root changed to "/" for full virtual filesystem access
+- Simplified README with concise installation instructions
+- Mermaid diagrams now respect light/dark theme changes
+
+### Removed
+- requirements.txt (dependencies managed via pyproject.toml)
+
 ## [0.1.4] - 2026-01-20
 
 ### Added
@@ -91,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resizable split-pane interface
 - Upload/download functionality for files
 
+[0.1.5]: https://github.com/dkedar7/cowork-dash/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/dkedar7/cowork-dash/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/dkedar7/cowork-dash/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/dkedar7/cowork-dash/compare/v0.1.1...v0.1.2
