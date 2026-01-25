@@ -854,6 +854,25 @@ def get_agent_state() -> Dict[str, Any]:
     with _agent_state_lock:
         return _agent_state.copy()
 
+def reset_agent_state():
+    """Reset agent state for a fresh session (thread-safe).
+
+    Called on page load to ensure clean state after browser refresh.
+    Preserves canvas items loaded from canvas.md.
+    """
+    with _agent_state_lock:
+        _agent_state["running"] = False
+        _agent_state["thinking"] = ""
+        _agent_state["todos"] = []
+        _agent_state["tool_calls"] = []
+        _agent_state["response"] = ""
+        _agent_state["error"] = None
+        _agent_state["interrupt"] = None
+        _agent_state["start_time"] = None
+        _agent_state["stop_requested"] = False
+        _agent_state["last_update"] = time.time()
+        # Note: canvas is preserved - it's loaded from canvas.md on startup
+
 # =============================================================================
 # DASH APP
 # =============================================================================
@@ -922,24 +941,31 @@ app.layout = create_layout
 # Initial message display
 @app.callback(
     [Output("chat-messages", "children"),
-     Output("skip-history-render", "data", allow_duplicate=True)],
+     Output("skip-history-render", "data", allow_duplicate=True),
+     Output("session-initialized", "data", allow_duplicate=True)],
     [Input("chat-history", "data")],
     [State("theme-store", "data"),
-     State("skip-history-render", "data")],
+     State("skip-history-render", "data"),
+     State("session-initialized", "data")],
     prevent_initial_call=False
 )
-def display_initial_messages(history, theme, skip_render):
+def display_initial_messages(history, theme, skip_render, session_initialized):
     """Display initial welcome message or chat history.
 
+    On first call (page load), resets agent state for a fresh session.
     Skip rendering if skip_render flag is set - this prevents duplicate renders
     when poll_agent_updates already handles the rendering.
     """
+    # Reset agent state on page load (first callback trigger)
+    if not session_initialized:
+        reset_agent_state()
+
     # Skip if flag is set (poll_agent_updates already rendered)
     if skip_render:
-        return no_update, False  # Reset the flag
+        return no_update, False, True  # Reset skip flag, mark session initialized
 
     if not history:
-        return [], False
+        return [], False, True
 
     colors = get_colors(theme or "light")
     messages = []
@@ -956,7 +982,7 @@ def display_initial_messages(history, theme, skip_render):
             todos_block = format_todos_inline(msg["todos"], colors)
             if todos_block:
                 messages.append(todos_block)
-    return messages, False
+    return messages, False, True
 
 # Chat callbacks
 @app.callback(
