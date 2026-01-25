@@ -139,9 +139,6 @@ details summary:hover {
 .folder-select-target {
     transition: background 0.15s ease;
 }
-.folder-select-target:hover {
-    background: var(--mantine-color-blue-light) !important;
-}
 
 .folder-expand-toggle {
     opacity: 0.6;
@@ -151,12 +148,9 @@ details summary:hover {
     opacity: 1;
 }
 
-/* Dark mode - breadcrumb and folder selection */
+/* Dark mode - breadcrumb */
 [data-mantine-color-scheme="dark"] .breadcrumb-clickable:hover {
     background: var(--mantine-color-dark-5) !important;
-}
-[data-mantine-color-scheme="dark"] .folder-select-target:hover {
-    background: var(--mantine-color-blue-9) !important;
 }
 
 /* Dark mode - input/summary/chat */
