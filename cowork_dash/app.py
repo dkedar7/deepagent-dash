@@ -921,15 +921,25 @@ app.layout = create_layout
 
 # Initial message display
 @app.callback(
-    Output("chat-messages", "children"),
+    [Output("chat-messages", "children"),
+     Output("skip-history-render", "data", allow_duplicate=True)],
     [Input("chat-history", "data")],
-    [State("theme-store", "data")],
+    [State("theme-store", "data"),
+     State("skip-history-render", "data")],
     prevent_initial_call=False
 )
-def display_initial_messages(history, theme):
-    """Display initial welcome message or chat history."""
+def display_initial_messages(history, theme, skip_render):
+    """Display initial welcome message or chat history.
+
+    Skip rendering if skip_render flag is set - this prevents duplicate renders
+    when poll_agent_updates already handles the rendering.
+    """
+    # Skip if flag is set (poll_agent_updates already rendered)
+    if skip_render:
+        return no_update, False  # Reset the flag
+
     if not history:
-        return []
+        return [], False
 
     colors = get_colors(theme or "light")
     messages = []
@@ -946,7 +956,7 @@ def display_initial_messages(history, theme):
             todos_block = format_todos_inline(msg["todos"], colors)
             if todos_block:
                 messages.append(todos_block)
-    return messages
+    return messages, False
 
 # Chat callbacks
 @app.callback(
@@ -1005,7 +1015,8 @@ def handle_send_immediate(n_clicks, n_submit, message, history, theme, current_w
 @app.callback(
     [Output("chat-messages", "children", allow_duplicate=True),
      Output("chat-history", "data", allow_duplicate=True),
-     Output("poll-interval", "disabled", allow_duplicate=True)],
+     Output("poll-interval", "disabled", allow_duplicate=True),
+     Output("skip-history-render", "data", allow_duplicate=True)],
     Input("poll-interval", "n_intervals"),
     [State("chat-history", "data"),
      State("pending-message", "data"),
@@ -1115,8 +1126,8 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
                 if todos_block:
                     final_messages.append(todos_block)
 
-        # Disable polling
-        return final_messages, history, True
+        # Disable polling, set skip flag to prevent display_initial_messages from re-rendering
+        return final_messages, history, True, True
     else:
         # Agent still running - show loading with current thinking/tool_calls/todos
         messages = render_history_messages(history)
@@ -1142,8 +1153,8 @@ def poll_agent_updates(n_intervals, history, pending_message, theme):
         # Add loading indicator
         messages.append(format_loading(colors))
 
-        # Continue polling
-        return messages, no_update, False
+        # Continue polling, no skip flag needed
+        return messages, no_update, False, no_update
 
 
 # Stop button visibility - show when agent is running
