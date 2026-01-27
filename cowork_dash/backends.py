@@ -7,7 +7,6 @@ This enables unified file access between the agent and Dash UI in virtual FS mod
 
 import fnmatch
 import re
-from typing import Any
 
 from deepagents.backends.protocol import (
     BackendProtocol,

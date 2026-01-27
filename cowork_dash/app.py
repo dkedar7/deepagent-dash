@@ -10,7 +10,6 @@ import platform
 import subprocess
 import threading
 import time
-import argparse
 import importlib.util
 from pathlib import Path
 from datetime import datetime
@@ -18,109 +17,26 @@ from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 load_dotenv()
 
-from dash import Dash, html, Input, Output, State, callback_context, no_update, ALL, clientside_callback
+from dash import Dash, html, Input, Output, State, callback_context, no_update, ALL
 from dash.exceptions import PreventUpdate
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
 
 # Import custom modules
-from .canvas import parse_canvas_object, export_canvas_to_markdown, load_canvas_from_markdown
+from .canvas import export_canvas_to_markdown, load_canvas_from_markdown
 from .file_utils import build_file_tree, render_file_tree, read_file_content, get_file_download_data, load_folder_contents
 from .components import (
-    format_message, format_loading, format_thinking, format_todos,
-    format_todos_inline, render_canvas_items, format_tool_calls_inline,
+    format_message, format_loading, format_thinking, format_todos_inline, render_canvas_items, format_tool_calls_inline,
     format_interrupt
 )
 from .layout import create_layout as create_layout_component
-from .virtual_fs import get_session_manager, VirtualFilesystem
+from .virtual_fs import get_session_manager
 
 # Import configuration defaults
 from . import config
 
 # Generate thread ID
 thread_id = str(uuid.uuid4())
-
-# Parse command-line arguments early
-def parse_args():
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="FastDash Browser - AI Agent Web Interface",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Use defaults from config.py
-  python app.py
-
-  # Override workspace and port
-  python app.py --workspace ~/my-workspace --port 8080
-
-  # Use custom agent from file
-  python app.py --agent my_agents.py:my_agent
-
-  # Production mode
-  python app.py --host 0.0.0.0 --port 80 --no-debug
-
-  # Debug mode with custom workspace
-  python app.py --debug --workspace /tmp/test-workspace
-        """
-    )
-
-    parser.add_argument(
-        "--workspace",
-        type=str,
-        help="Workspace directory path (default: from config.py)"
-    )
-
-    parser.add_argument(
-        "--agent",
-        type=str,
-        metavar="PATH:OBJECT",
-        help='Agent specification as "path/to/file.py:object_name" (e.g., "agent.py:agent" or "my_agents.py:custom_agent")'
-    )
-
-    parser.add_argument(
-        "--port",
-        type=int,
-        help="Port to run on (default: from config.py)"
-    )
-
-    parser.add_argument(
-        "--host",
-        type=str,
-        help="Host to bind to (default: from config.py)"
-    )
-
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug mode"
-    )
-
-    parser.add_argument(
-        "--no-debug",
-        action="store_true",
-        help="Disable debug mode"
-    )
-
-    parser.add_argument(
-        "--title",
-        type=str,
-        help="Application title (default: from config.py)"
-    )
-
-    parser.add_argument(
-        "--subtitle",
-        type=str,
-        help="Application subtitle (default: from config.py)"
-    )
-
-    parser.add_argument(
-        "--config",
-        type=str,
-        help="Path to configuration file (default: config.py)"
-    )
-
-    return parser.parse_args()
 
 def load_agent_from_spec(agent_spec: str):
     """
@@ -1700,7 +1616,7 @@ def toggle_folder(n_clicks, header_ids, real_paths, children_ids, icon_ids, chil
      State("session-id", "data")],
     prevent_initial_call=True
 )
-def enter_folder(folder_clicks, root_clicks, breadcrumb_clicks, folder_ids, folder_paths, prev_clicks, current_path, theme, session_id):
+def enter_folder(folder_clicks, root_clicks, breadcrumb_clicks, folder_ids, folder_paths, _prev_clicks, current_path, theme, session_id):
     """Enter a folder (double-click) or navigate via breadcrumb."""
     ctx = callback_context
     if not ctx.triggered:
@@ -1741,7 +1657,6 @@ def enter_folder(folder_clicks, root_clicks, breadcrumb_clicks, folder_ids, fold
         for i, folder_id in enumerate(folder_ids):
             if folder_id["path"] == clicked_path:
                 current_clicks = folder_clicks[i] if i < len(folder_clicks) else 0
-                previous_clicks = prev_clicks[i] if i < len(prev_clicks) else 0
 
                 # Only enter on double-click (clicks increased and is even number >= 2)
                 if current_clicks and current_clicks >= 2 and current_clicks % 2 == 0:
@@ -2772,8 +2687,8 @@ def run_app(
     print(f"  {APP_TITLE}")
     print("="*50)
     if USE_VIRTUAL_FS:
-        print(f"  Filesystem: Virtual (in-memory, ephemeral)")
-        print(f"    Sessions are isolated and data is not persisted")
+        print("  Filesystem: Virtual (in-memory, ephemeral)")
+        print("    Sessions are isolated and data is not persisted")
     else:
         print(f"  Workspace: {WORKSPACE_ROOT}")
         if workspace:
@@ -2794,24 +2709,3 @@ def run_app(
     except Exception as e:
         print(f"\n❌ Error running app: {e}")
         return 1
-
-
-# =============================================================================
-# MAIN - BACKWARDS COMPATIBILITY
-# =============================================================================
-
-if __name__ == "__main__":
-    # Parse CLI arguments
-    args = parse_args()
-
-    # When run directly (not as package), use original CLI arg parsing
-    sys.exit(run_app(
-        workspace=args.workspace if args.workspace else None,
-        agent_spec=args.agent if args.agent else None,
-        port=args.port if args.port else None,
-        host=args.host if args.host else None,
-        debug=args.debug if args.debug else (not args.no_debug if args.no_debug else None),
-        title=args.title if args.title else None,
-        subtitle=args.subtitle if args.subtitle else None,
-        config_file=args.config if args.config else None
-    ))

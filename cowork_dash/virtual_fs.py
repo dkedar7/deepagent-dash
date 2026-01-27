@@ -344,25 +344,6 @@ class VirtualFilesystem:
 
         return sorted(results)
 
-    def get_stats(self) -> Dict[str, Any]:
-        """Get filesystem statistics."""
-        with self._lock:
-            total_size = sum(len(data) for data in self._files.values())
-            return {
-                "file_count": len(self._files),
-                "directory_count": len(self._directories),
-                "total_size_bytes": total_size,
-                "created_at": self._created_at.isoformat(),
-                "last_accessed": self._last_accessed.isoformat(),
-            }
-
-    def clear(self) -> None:
-        """Clear all files and directories except root."""
-        with self._lock:
-            self._files.clear()
-            self._directories = {self._root}
-
-
 class SessionManager:
     """Manages per-session virtual filesystems.
 
@@ -468,35 +449,6 @@ class SessionManager:
             print(f"Session cleanup: removed {len(expired)} expired sessions")
 
         return len(expired)
-
-    def get_active_session_count(self) -> int:
-        """Get count of active sessions."""
-        with self._lock:
-            return len(self._sessions)
-
-    def get_all_stats(self) -> Dict[str, Any]:
-        """Get statistics about all sessions."""
-        with self._lock:
-            sessions_stats = {}
-            total_files = 0
-            total_size = 0
-
-            for session_id, session in self._sessions.items():
-                fs_stats = session["filesystem"].get_stats()
-                sessions_stats[session_id] = {
-                    "created_at": session["created_at"].isoformat(),
-                    "last_accessed": session["last_accessed"].isoformat(),
-                    "filesystem": fs_stats,
-                }
-                total_files += fs_stats["file_count"]
-                total_size += fs_stats["total_size_bytes"]
-
-            return {
-                "session_count": len(self._sessions),
-                "total_files": total_files,
-                "total_size_bytes": total_size,
-                "sessions": sessions_stats,
-            }
 
 
 # Global session manager instance
