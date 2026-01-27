@@ -2524,26 +2524,34 @@ def handle_delete_confirmation(confirm_clicks, cancel_clicks, item_id, theme, co
         if not confirm_clicks or not item_id:
             raise PreventUpdate
 
-        global _agent_state
         colors = get_colors(theme or "light")
         collapsed_ids = collapsed_ids or []
 
         # Get workspace for this session (virtual or physical)
         workspace_root = get_workspace_for_session(session_id)
 
-        # Remove the item from canvas
-        with _agent_state_lock:
-            _agent_state["canvas"] = [
-                item for item in _agent_state["canvas"]
-                if item.get("id") != item_id
-            ]
-            canvas_items = _agent_state["canvas"].copy()
+        # Remove the item from canvas (session-specific in virtual FS mode)
+        if USE_VIRTUAL_FS and session_id:
+            current_state = _get_session_state(session_id)
+            with _session_agents_lock:
+                current_state["canvas"] = [
+                    item for item in current_state.get("canvas", [])
+                    if item.get("id") != item_id
+                ]
+                canvas_items = current_state["canvas"].copy()
+        else:
+            with _agent_state_lock:
+                _agent_state["canvas"] = [
+                    item for item in _agent_state["canvas"]
+                    if item.get("id") != item_id
+                ]
+                canvas_items = _agent_state["canvas"].copy()
 
-            # Export updated canvas to markdown file
-            try:
-                export_canvas_to_markdown(canvas_items, workspace_root)
-            except Exception as e:
-                print(f"Failed to export canvas after delete: {e}")
+        # Export updated canvas to markdown file
+        try:
+            export_canvas_to_markdown(canvas_items, workspace_root)
+        except Exception as e:
+            print(f"Failed to export canvas after delete: {e}")
 
         # Remove deleted item from collapsed_ids if present
         new_collapsed_ids = [cid for cid in collapsed_ids if cid != item_id]
