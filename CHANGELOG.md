@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-01-26
+
+### Added
+- Virtual filesystem mode (`--virtual-fs` flag) for multi-user session isolation
+- VirtualFilesystem, VirtualPath, and SessionManager classes for in-memory storage
+- VirtualFilesystemBackend implementing DeepAgents' BackendProtocol
+- Session-aware agent factory creating per-session agents with isolated backends
+- Comprehensive test suite with 184 tests covering virtual FS, backends, canvas, and file utilities
+- Tool context system for session-aware file operations
+
+### Changed
+- File and canvas utilities now support both physical and virtual filesystems
+- CLI updated with `--virtual-fs` flag for ephemeral session mode
+
+### Removed
+- Dead code cleanup: removed 156 lines of unused imports, functions, and debug methods
+- Removed obsolete CLI_USAGE.md documentation
+
 ## [0.1.6] - 2026-01-25
 
 ### Fixed
@@ -118,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resizable split-pane interface
 - Upload/download functionality for files
 
+[0.1.7]: https://github.com/dkedar7/cowork-dash/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/dkedar7/cowork-dash/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/dkedar7/cowork-dash/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/dkedar7/cowork-dash/compare/v0.1.3...v0.1.4
