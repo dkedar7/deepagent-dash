@@ -1,13 +1,59 @@
 from typing import Any, Dict, List, Optional
 import sys
 import io
+import os
 import traceback
 import subprocess
 import threading
-from contextlib import redirect_stdout, redirect_stderr
+import platform
+from contextlib import redirect_stdout, redirect_stderr, contextmanager
 
 from .config import WORKSPACE_ROOT, VIRTUAL_FS
 from .canvas import parse_canvas_object, generate_canvas_id
+
+
+# Memory limit for cell execution (in bytes)
+# Default: 512 MB - can be overridden via environment variable
+CELL_MEMORY_LIMIT_MB = int(os.environ.get("COWORK_CELL_MEMORY_LIMIT_MB", "512"))
+CELL_MEMORY_LIMIT_BYTES = CELL_MEMORY_LIMIT_MB * 1024 * 1024
+
+
+@contextmanager
+def memory_limit(max_bytes: int = CELL_MEMORY_LIMIT_BYTES):
+    """Context manager to set memory limits for code execution on Linux.
+
+    On Linux, uses resource.setrlimit() to set soft memory limit.
+    On other platforms (macOS, Windows), this is a no-op as they don't
+    support RLIMIT_AS in the same way or at all.
+
+    The limit applies to the virtual address space (RLIMIT_AS) which
+    will cause MemoryError when exceeded rather than OOM kill.
+
+    Args:
+        max_bytes: Maximum memory in bytes. Default from CELL_MEMORY_LIMIT_BYTES.
+    """
+    if platform.system() != "Linux":
+        # Memory limits via resource module only work reliably on Linux
+        yield
+        return
+
+    try:
+        import resource
+    except ImportError:
+        yield
+        return
+
+    # Get current limits
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+
+    try:
+        # Set new soft limit (don't exceed hard limit)
+        new_soft = min(max_bytes, hard) if hard != resource.RLIM_INFINITY else max_bytes
+        resource.setrlimit(resource.RLIMIT_AS, (new_soft, hard))
+        yield
+    finally:
+        # Restore original limits
+        resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
 
 
 # Thread-local storage for current session context
@@ -383,47 +429,54 @@ except (ImportError, AttributeError):
         }
 
         try:
-            # Try IPython first for better execution handling
-            ipython = self._get_ipython()
+            # Apply memory limit on Linux to prevent OOM kills
+            with memory_limit():
+                # Try IPython first for better execution handling
+                ipython = self._get_ipython()
 
-            if ipython is not None:
-                # Use IPython's run_cell for magic commands support
-                with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                    exec_result = ipython.run_cell(cell["source"], store_history=True)
+                if ipython is not None:
+                    # Use IPython's run_cell for magic commands support
+                    with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                        exec_result = ipython.run_cell(cell["source"], store_history=True)
 
-                result["stdout"] = stdout_capture.getvalue()
-                result["stderr"] = stderr_capture.getvalue()
+                    result["stdout"] = stdout_capture.getvalue()
+                    result["stderr"] = stderr_capture.getvalue()
 
-                if exec_result.success:
-                    if exec_result.result is not None:
-                        result["result"] = repr(exec_result.result)
+                    if exec_result.success:
+                        if exec_result.result is not None:
+                            result["result"] = repr(exec_result.result)
+                    else:
+                        if exec_result.error_in_exec:
+                            result["error"] = str(exec_result.error_in_exec)
+                            result["status"] = "error"
+                        elif exec_result.error_before_exec:
+                            result["error"] = str(exec_result.error_before_exec)
+                            result["status"] = "error"
                 else:
-                    if exec_result.error_in_exec:
-                        result["error"] = str(exec_result.error_in_exec)
-                        result["status"] = "error"
-                    elif exec_result.error_before_exec:
-                        result["error"] = str(exec_result.error_before_exec)
-                        result["status"] = "error"
-            else:
-                # Fallback to exec() if IPython is not available
-                with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                    # Compile to check for expression vs statement
-                    code = cell["source"].strip()
+                    # Fallback to exec() if IPython is not available
+                    with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+                        # Compile to check for expression vs statement
+                        code = cell["source"].strip()
 
-                    # Try to evaluate as expression first (to get return value)
-                    try:
-                        # Check if it's a simple expression
-                        compiled = compile(code, "<cell>", "eval")
-                        exec_result = eval(compiled, self._namespace)
-                        if exec_result is not None:
-                            result["result"] = repr(exec_result)
-                    except SyntaxError:
-                        # It's a statement, execute it
-                        exec(code, self._namespace)
+                        # Try to evaluate as expression first (to get return value)
+                        try:
+                            # Check if it's a simple expression
+                            compiled = compile(code, "<cell>", "eval")
+                            exec_result = eval(compiled, self._namespace)
+                            if exec_result is not None:
+                                result["result"] = repr(exec_result)
+                        except SyntaxError:
+                            # It's a statement, execute it
+                            exec(code, self._namespace)
 
-                result["stdout"] = stdout_capture.getvalue()
-                result["stderr"] = stderr_capture.getvalue()
+                    result["stdout"] = stdout_capture.getvalue()
+                    result["stderr"] = stderr_capture.getvalue()
 
+        except MemoryError:
+            result["error"] = f"MemoryError: Cell execution exceeded memory limit ({CELL_MEMORY_LIMIT_MB} MB). Try processing data in smaller chunks."
+            result["status"] = "error"
+            result["stdout"] = stdout_capture.getvalue()
+            result["stderr"] = stderr_capture.getvalue()
         except Exception:
             result["error"] = traceback.format_exc()
             result["status"] = "error"
