@@ -17,7 +17,15 @@ from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 load_dotenv()
 
-from dash import Dash, html, Input, Output, State, callback_context, no_update, ALL
+# Early pandas import to prevent circular import issues with Plotly's JSON serializer.
+# Plotly lazily imports pandas and checks `obj is pd.NaT` which fails if pandas
+# is partially initialized due to concurrent imports.
+try:
+    import pandas
+except (ImportError, AttributeError):
+    pass
+
+from dash import Dash, html, dcc, Input, Output, State, callback_context, no_update, ALL
 from dash.exceptions import PreventUpdate
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
@@ -1493,7 +1501,8 @@ def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_
 @app.callback(
     [Output({"type": "folder-children", "path": ALL}, "style"),
      Output({"type": "folder-icon", "path": ALL}, "style"),
-     Output({"type": "folder-children", "path": ALL}, "children")],
+     Output({"type": "folder-children", "path": ALL}, "children"),
+     Output("expanded-folders", "data")],
     Input({"type": "folder-icon", "path": ALL}, "n_clicks"),
     [State({"type": "folder-header", "path": ALL}, "id"),
      State({"type": "folder-header", "path": ALL}, "data-realpath"),
@@ -1503,16 +1512,18 @@ def handle_interrupt_response(approve_clicks, reject_clicks, edit_clicks, input_
      State({"type": "folder-icon", "path": ALL}, "style"),
      State({"type": "folder-children", "path": ALL}, "children"),
      State("theme-store", "data"),
-     State("session-id", "data")],
+     State("session-id", "data"),
+     State("expanded-folders", "data")],
     prevent_initial_call=True
 )
-def toggle_folder(n_clicks, header_ids, real_paths, children_ids, icon_ids, children_styles, icon_styles, children_content, theme, session_id):
+def toggle_folder(n_clicks, header_ids, real_paths, children_ids, icon_ids, children_styles, icon_styles, children_content, theme, session_id, expanded_folders):
     """Toggle folder expansion and lazy load contents if needed."""
     ctx = callback_context
     if not ctx.triggered or not any(n_clicks):
         raise PreventUpdate
 
     colors = get_colors(theme or "light")
+    expanded_folders = expanded_folders or []
 
     # Get workspace for this session (virtual or physical)
     workspace_root = get_workspace_for_session(session_id)
@@ -1538,6 +1549,9 @@ def toggle_folder(n_clicks, header_ids, real_paths, children_ids, icon_ids, chil
     new_icon_styles = []
     new_children_content = []
 
+    # Track whether we're expanding or collapsing the clicked folder
+    will_expand = None
+
     # Process all folder-children elements
     for i, child_id in enumerate(children_ids):
         path = child_id["path"]
@@ -1547,6 +1561,7 @@ def toggle_folder(n_clicks, header_ids, real_paths, children_ids, icon_ids, chil
         if path == clicked_path:
             # Toggle this folder
             is_expanded = current_style.get("display") != "none"
+            will_expand = not is_expanded
             new_children_styles.append({"display": "none" if is_expanded else "block"})
 
             # If expanding and content is just "Loading...", load the actual contents
@@ -1560,7 +1575,8 @@ def toggle_folder(n_clicks, header_ids, real_paths, children_ids, icon_ids, chil
                         folder_items = load_folder_contents(folder_rel_path, workspace_root)
                         loaded_content = render_file_tree(folder_items, colors, STYLES,
                                                           level=folder_rel_path.count("/") + folder_rel_path.count("\\") + 1,
-                                                          parent_path=folder_rel_path)
+                                                          parent_path=folder_rel_path,
+                                                          expanded_folders=expanded_folders)
                         new_children_content.append(loaded_content if loaded_content else current_content)
                     except Exception as e:
                         print(f"Error loading folder {folder_rel_path}: {e}")
@@ -1597,14 +1613,23 @@ def toggle_folder(n_clicks, header_ids, real_paths, children_ids, icon_ids, chil
         else:
             new_icon_styles.append(current_icon_style)
 
-    return new_children_styles, new_icon_styles, new_children_content
+    # Update expanded folders list
+    new_expanded_folders = list(expanded_folders)
+    if will_expand is not None:
+        if will_expand and clicked_path not in new_expanded_folders:
+            new_expanded_folders.append(clicked_path)
+        elif not will_expand and clicked_path in new_expanded_folders:
+            new_expanded_folders.remove(clicked_path)
+
+    return new_children_styles, new_icon_styles, new_children_content, new_expanded_folders
 
 
 # Enter folder callback - triggered by double-clicking folder name (changes workspace root)
 @app.callback(
     [Output("current-workspace-path", "data"),
      Output("workspace-breadcrumb", "children"),
-     Output("file-tree", "children", allow_duplicate=True)],
+     Output("file-tree", "children", allow_duplicate=True),
+     Output("expanded-folders", "data", allow_duplicate=True)],
     [Input({"type": "folder-select", "path": ALL}, "n_clicks"),
      Input("breadcrumb-root", "n_clicks"),
      Input({"type": "breadcrumb-segment", "index": ALL}, "n_clicks")],
@@ -1720,13 +1745,13 @@ def enter_folder(folder_clicks, root_clicks, breadcrumb_clicks, folder_ids, fold
     else:
         workspace_full_path = workspace_root / new_path if new_path else workspace_root
 
-    # Render new file tree
+    # Render new file tree (reset expanded folders when navigating)
     file_tree = render_file_tree(
         build_file_tree(workspace_full_path, workspace_full_path),
         colors, STYLES
     )
 
-    return new_path, breadcrumb_children, file_tree
+    return new_path, breadcrumb_children, file_tree, []  # Reset expanded folders
 
 
 # File click - open modal
@@ -1805,23 +1830,207 @@ def open_file_modal(all_n_clicks, all_ids, click_tracker, theme, session_id):
     colors = get_colors(theme or "light")
     content, is_text, error = read_file_content(workspace_root, file_path)
     filename = Path(file_path).name
+    file_ext = Path(file_path).suffix.lower()
 
-    if is_text and content:
-        modal_content = html.Pre(
-            content,
-            style={
-                "background": colors["bg_tertiary"],
-                "padding": "16px",
-                "fontSize": "12px",
-                "fontFamily": "'IBM Plex Mono', monospace",
-                "overflow": "auto",
-                "maxHeight": "60vh",
-                "whiteSpace": "pre-wrap",
-                "wordBreak": "break-word",
-                "margin": "0",
-                "color": colors["text_primary"],
-            }
-        )
+    # Define file type categories for binary previews
+    image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'}
+    pdf_exts = {'.pdf'}
+
+    # Check for binary preview types first
+    if file_ext in image_exts | pdf_exts:
+        b64, _, mime = get_file_download_data(workspace_root, file_path)
+        if b64:
+            data_url = f"data:{mime};base64,{b64}"
+
+            if file_ext in image_exts:
+                # Image preview
+                modal_content = html.Div([
+                    html.Img(
+                        src=data_url,
+                        style={
+                            "maxWidth": "100%",
+                            "maxHeight": "80vh",
+                            "display": "block",
+                            "margin": "0 auto",
+                            "borderRadius": "4px",
+                        }
+                    )
+                ], style={"textAlign": "center"})
+
+            elif file_ext in pdf_exts:
+                # PDF preview via embed
+                modal_content = html.Embed(
+                    src=data_url,
+                    type="application/pdf",
+                    style={
+                        "width": "100%",
+                        "height": "80vh",
+                        "borderRadius": "4px",
+                    }
+                )
+        else:
+            # Failed to read binary file
+            modal_content = html.Div([
+                html.P("Failed to load file preview", style={
+                    "color": colors["text_muted"],
+                    "textAlign": "center",
+                    "padding": "40px",
+                }),
+                html.P("Click Download to save the file.", style={
+                    "color": colors["text_muted"],
+                    "textAlign": "center",
+                    "fontSize": "13px",
+                })
+            ])
+
+    elif is_text and content:
+        # HTML files get rendered preview
+        if file_ext in ('.html', '.htm'):
+            modal_content = html.Div([
+                # Tab buttons for switching views
+                html.Div([
+                    html.Button("Preview", id="html-preview-tab", n_clicks=0,
+                        className="html-tab-btn html-tab-active",
+                        style={"marginRight": "8px", "padding": "6px 12px", "border": "none",
+                               "borderRadius": "4px", "cursor": "pointer",
+                               "background": colors["accent"], "color": "#fff"}),
+                    html.Button("Source", id="html-source-tab", n_clicks=0,
+                        className="html-tab-btn",
+                        style={"padding": "6px 12px", "border": f"1px solid {colors['border']}",
+                               "borderRadius": "4px", "cursor": "pointer",
+                               "background": "transparent", "color": colors["text_primary"]}),
+                ], style={"marginBottom": "12px", "display": "flex"}),
+                # Preview iframe (default visible)
+                html.Iframe(
+                    srcDoc=content,
+                    style={
+                        "width": "100%",
+                        "height": "80vh",
+                        "border": f"1px solid {colors['border']}",
+                        "borderRadius": "4px",
+                        "background": "#fff",
+                    },
+                    id="html-preview-frame"
+                ),
+                # Source code (hidden by default)
+                html.Pre(
+                    content,
+                    id="html-source-code",
+                    style={
+                        "display": "none",
+                        "background": colors["bg_tertiary"],
+                        "padding": "16px",
+                        "fontSize": "12px",
+                        "fontFamily": "'IBM Plex Mono', monospace",
+                        "overflow": "auto",
+                        "maxHeight": "80vh",
+                        "whiteSpace": "pre-wrap",
+                        "wordBreak": "break-word",
+                        "margin": "0",
+                        "color": colors["text_primary"],
+                        "border": f"1px solid {colors['border']}",
+                        "borderRadius": "4px",
+                    }
+                )
+            ])
+        elif file_ext == '.json':
+            # Try to parse as Plotly JSON figure
+            plotly_figure = None
+            try:
+                data = json.loads(content)
+                # Check if it looks like a Plotly figure (has 'data' key with list)
+                if isinstance(data, dict) and 'data' in data and isinstance(data['data'], list):
+                    plotly_figure = data
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+            if plotly_figure:
+                # Render as interactive Plotly chart with source toggle
+                modal_content = html.Div([
+                    # Tab buttons for switching views
+                    html.Div([
+                        html.Button("Chart", id="html-preview-tab", n_clicks=0,
+                            className="html-tab-btn html-tab-active",
+                            style={"marginRight": "8px", "padding": "6px 12px", "border": "none",
+                                   "borderRadius": "4px", "cursor": "pointer",
+                                   "background": colors["accent"], "color": "#fff"}),
+                        html.Button("JSON", id="html-source-tab", n_clicks=0,
+                            className="html-tab-btn",
+                            style={"padding": "6px 12px", "border": f"1px solid {colors['border']}",
+                                   "borderRadius": "4px", "cursor": "pointer",
+                                   "background": "transparent", "color": colors["text_primary"]}),
+                    ], style={"marginBottom": "12px", "display": "flex"}),
+                    # Plotly chart (default visible)
+                    html.Div([
+                        dcc.Graph(
+                            figure=plotly_figure,
+                            style={"height": "75vh"},
+                            config={"displayModeBar": True, "responsive": True}
+                        )
+                    ], id="html-preview-frame", style={
+                        "border": f"1px solid {colors['border']}",
+                        "borderRadius": "4px",
+                        "background": "#fff",
+                    }),
+                    # JSON source (hidden by default)
+                    html.Pre(
+                        json.dumps(plotly_figure, indent=2),
+                        id="html-source-code",
+                        style={
+                            "display": "none",
+                            "background": colors["bg_tertiary"],
+                            "padding": "16px",
+                            "fontSize": "12px",
+                            "fontFamily": "'IBM Plex Mono', monospace",
+                            "overflow": "auto",
+                            "maxHeight": "80vh",
+                            "whiteSpace": "pre-wrap",
+                            "wordBreak": "break-word",
+                            "margin": "0",
+                            "color": colors["text_primary"],
+                            "border": f"1px solid {colors['border']}",
+                            "borderRadius": "4px",
+                        }
+                    )
+                ])
+            else:
+                # Regular JSON - show formatted
+                try:
+                    formatted = json.dumps(json.loads(content), indent=2)
+                except json.JSONDecodeError:
+                    formatted = content
+                modal_content = html.Pre(
+                    formatted,
+                    style={
+                        "background": colors["bg_tertiary"],
+                        "padding": "16px",
+                        "fontSize": "12px",
+                        "fontFamily": "'IBM Plex Mono', monospace",
+                        "overflow": "auto",
+                        "maxHeight": "80vh",
+                        "whiteSpace": "pre-wrap",
+                        "wordBreak": "break-word",
+                        "margin": "0",
+                        "color": colors["text_primary"],
+                    }
+                )
+        else:
+            # Regular text files
+            modal_content = html.Pre(
+                content,
+                style={
+                    "background": colors["bg_tertiary"],
+                    "padding": "16px",
+                    "fontSize": "12px",
+                    "fontFamily": "'IBM Plex Mono', monospace",
+                    "overflow": "auto",
+                    "maxHeight": "80vh",
+                    "whiteSpace": "pre-wrap",
+                    "wordBreak": "break-word",
+                    "margin": "0",
+                    "color": colors["text_primary"],
+                }
+            )
     else:
         modal_content = html.Div([
             html.P(error or "Cannot display file", style={
@@ -1868,6 +2077,71 @@ def download_from_modal(n_clicks, file_path, session_id):
         raise PreventUpdate
 
     return dict(content=b64, filename=filename, base64=True, type=mime)
+
+
+# HTML preview/source tab switching
+@app.callback(
+    [Output("html-preview-frame", "style"),
+     Output("html-source-code", "style"),
+     Output("html-preview-tab", "style"),
+     Output("html-source-tab", "style")],
+    [Input("html-preview-tab", "n_clicks"),
+     Input("html-source-tab", "n_clicks")],
+    [State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def toggle_html_view(preview_clicks, source_clicks, theme):
+    """Toggle between HTML preview and source code view."""
+    ctx = callback_context
+    if not ctx.triggered:
+        raise PreventUpdate
+
+    colors = get_colors(theme or "light")
+    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    # Base styles
+    preview_frame_style = {
+        "width": "100%",
+        "height": "80vh",
+        "border": f"1px solid {colors['border']}",
+        "borderRadius": "4px",
+        "background": "#fff",
+    }
+    source_code_style = {
+        "background": colors["bg_tertiary"],
+        "padding": "16px",
+        "fontSize": "12px",
+        "fontFamily": "'IBM Plex Mono', monospace",
+        "overflow": "auto",
+        "maxHeight": "80vh",
+        "whiteSpace": "pre-wrap",
+        "wordBreak": "break-word",
+        "margin": "0",
+        "color": colors["text_primary"],
+        "border": f"1px solid {colors['border']}",
+        "borderRadius": "4px",
+    }
+    active_btn_style = {
+        "marginRight": "8px", "padding": "6px 12px", "border": "none",
+        "borderRadius": "4px", "cursor": "pointer",
+        "background": colors["accent"], "color": "#fff"
+    }
+    inactive_btn_style = {
+        "padding": "6px 12px", "border": f"1px solid {colors['border']}",
+        "borderRadius": "4px", "cursor": "pointer",
+        "background": "transparent", "color": colors["text_primary"]
+    }
+
+    if triggered_id == "html-source-tab":
+        # Show source, hide preview
+        preview_frame_style["display"] = "none"
+        source_code_style["display"] = "block"
+        return preview_frame_style, source_code_style, {**inactive_btn_style, "marginRight": "8px"}, active_btn_style
+    else:
+        # Show preview, hide source (default)
+        preview_frame_style["display"] = "block"
+        source_code_style["display"] = "none"
+        return preview_frame_style, source_code_style, active_btn_style, {**inactive_btn_style}
 
 
 # Open terminal
@@ -1922,13 +2196,15 @@ def open_terminal(n_clicks):
     [State("current-workspace-path", "data"),
      State("theme-store", "data"),
      State("collapsed-canvas-items", "data"),
-     State("session-id", "data")],
+     State("session-id", "data"),
+     State("expanded-folders", "data")],
     prevent_initial_call=True
 )
-def refresh_sidebar(n_clicks, current_workspace, theme, collapsed_ids, session_id):
+def refresh_sidebar(n_clicks, current_workspace, theme, collapsed_ids, session_id, expanded_folders):
     """Refresh both file tree and canvas content."""
     colors = get_colors(theme or "light")
     collapsed_ids = collapsed_ids or []
+    expanded_folders = expanded_folders or []
 
     # Get workspace for this session (virtual or physical)
     workspace_root = get_workspace_for_session(session_id)
@@ -1939,8 +2215,8 @@ def refresh_sidebar(n_clicks, current_workspace, theme, collapsed_ids, session_i
     else:
         current_workspace_dir = workspace_root / current_workspace if current_workspace else workspace_root
 
-    # Refresh file tree for current workspace
-    file_tree = render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES)
+    # Refresh file tree for current workspace, preserving expanded folders
+    file_tree = render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES, expanded_folders=expanded_folders)
 
     # Re-render canvas from current in-memory state (don't reload from file)
     # This preserves canvas items that may not have been exported to .canvas/canvas.md yet
@@ -1960,15 +2236,17 @@ def refresh_sidebar(n_clicks, current_workspace, theme, collapsed_ids, session_i
     [State("file-upload-sidebar", "filename"),
      State("current-workspace-path", "data"),
      State("theme-store", "data"),
-     State("session-id", "data")],
+     State("session-id", "data"),
+     State("expanded-folders", "data")],
     prevent_initial_call=True
 )
-def handle_sidebar_upload(contents, filenames, current_workspace, theme, session_id):
+def handle_sidebar_upload(contents, filenames, current_workspace, theme, session_id, expanded_folders):
     """Handle file uploads from sidebar button to current workspace."""
     if not contents:
         raise PreventUpdate
 
     colors = get_colors(theme or "light")
+    expanded_folders = expanded_folders or []
 
     # Get workspace for this session (virtual or physical)
     workspace_root = get_workspace_for_session(session_id)
@@ -1991,7 +2269,7 @@ def handle_sidebar_upload(contents, filenames, current_workspace, theme, session
         except Exception as e:
             print(f"Upload error: {e}")
 
-    return render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES)
+    return render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES, expanded_folders=expanded_folders)
 
 
 # Create folder modal - open
@@ -2034,15 +2312,17 @@ def toggle_create_folder_modal(open_clicks, cancel_clicks, confirm_clicks, is_op
     [State("new-folder-name", "value"),
      State("current-workspace-path", "data"),
      State("theme-store", "data"),
-     State("session-id", "data")],
+     State("session-id", "data"),
+     State("expanded-folders", "data")],
     prevent_initial_call=True
 )
-def create_folder(n_clicks, folder_name, current_workspace, theme, session_id):
+def create_folder(n_clicks, folder_name, current_workspace, theme, session_id, expanded_folders):
     """Create a new folder in the current workspace directory."""
     if not n_clicks:
         raise PreventUpdate
 
     colors = get_colors(theme or "light")
+    expanded_folders = expanded_folders or []
 
     if not folder_name or not folder_name.strip():
         return no_update, "Please enter a folder name", no_update
@@ -2070,7 +2350,7 @@ def create_folder(n_clicks, folder_name, current_workspace, theme, session_id):
 
     try:
         folder_path.mkdir(parents=True, exist_ok=False)
-        return render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES), "", ""
+        return render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES, expanded_folders=expanded_folders), "", ""
     except Exception as e:
         return no_update, f"Error creating folder: {e}", no_update
 
@@ -2156,15 +2436,17 @@ def update_canvas_content(n_intervals, view_value, theme, collapsed_ids, session
     [State("current-workspace-path", "data"),
      State("theme-store", "data"),
      State("session-id", "data"),
-     State("sidebar-view-toggle", "value")],
+     State("sidebar-view-toggle", "value"),
+     State("expanded-folders", "data")],
     prevent_initial_call=True
 )
-def poll_file_tree_update(n_intervals, current_workspace, theme, session_id, view_value):
+def poll_file_tree_update(n_intervals, current_workspace, theme, session_id, view_value, expanded_folders):
     """Refresh file tree during agent execution to show newly created files.
 
     This callback runs on each poll interval and refreshes the file tree
     so that files created by the agent are visible in real-time.
     Only updates when viewing files (not canvas).
+    Preserves expanded folder state across refreshes.
     """
     # Only refresh when viewing files panel
     if view_value != "files":
@@ -2180,6 +2462,7 @@ def poll_file_tree_update(n_intervals, current_workspace, theme, session_id, vie
         raise PreventUpdate
 
     colors = get_colors(theme or "light")
+    expanded_folders = expanded_folders or []
 
     # Get workspace for this session (virtual or physical)
     workspace_root = get_workspace_for_session(session_id)
@@ -2190,8 +2473,8 @@ def poll_file_tree_update(n_intervals, current_workspace, theme, session_id, vie
     else:
         current_workspace_dir = workspace_root / current_workspace if current_workspace else workspace_root
 
-    # Refresh file tree
-    return render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES)
+    # Refresh file tree, preserving expanded folder state
+    return render_file_tree(build_file_tree(current_workspace_dir, current_workspace_dir), colors, STYLES, expanded_folders=expanded_folders)
 
 
 # Open clear canvas confirmation modal
