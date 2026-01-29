@@ -13,6 +13,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 
+# Early pandas import to prevent circular import issues with Plotly's JSON serializer.
+# Plotly lazily imports pandas and checks `obj is pd.NaT` which fails if pandas
+# is partially initialized due to concurrent imports.
+try:
+    import pandas
+except (ImportError, AttributeError):
+    pass
+
 from .virtual_fs import VirtualFilesystem, VirtualPath
 
 

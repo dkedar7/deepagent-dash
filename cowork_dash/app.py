@@ -17,6 +17,14 @@ from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 load_dotenv()
 
+# Early pandas import to prevent circular import issues with Plotly's JSON serializer.
+# Plotly lazily imports pandas and checks `obj is pd.NaT` which fails if pandas
+# is partially initialized due to concurrent imports.
+try:
+    import pandas
+except (ImportError, AttributeError):
+    pass
+
 from dash import Dash, html, dcc, Input, Output, State, callback_context, no_update, ALL
 from dash.exceptions import PreventUpdate
 import dash_mantine_components as dmc
