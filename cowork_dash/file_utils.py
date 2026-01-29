@@ -288,11 +288,25 @@ def get_file_download_data(
         # Determine MIME type
         ext = PurePosixPath(path).suffix.lower()
         mime_types = {
+            # Text
             ".txt": "text/plain", ".py": "text/x-python", ".js": "text/javascript",
-            ".json": "application/json", ".html": "text/html", ".css": "text/css",
-            ".md": "text/markdown", ".csv": "text/csv", ".xml": "text/xml",
-            ".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
-            ".gif": "image/gif", ".zip": "application/zip",
+            ".json": "application/json", ".html": "text/html", ".htm": "text/html",
+            ".css": "text/css", ".md": "text/markdown", ".csv": "text/csv",
+            ".xml": "text/xml", ".yaml": "text/yaml", ".yml": "text/yaml",
+            # Images
+            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+            ".ico": "image/x-icon", ".bmp": "image/bmp",
+            # Video
+            ".mp4": "video/mp4", ".webm": "video/webm", ".ogg": "video/ogg",
+            ".mov": "video/quicktime",
+            # Audio
+            ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+            ".flac": "audio/flac",
+            # Documents
+            ".pdf": "application/pdf",
+            # Archives
+            ".zip": "application/zip",
         }
         mime = mime_types.get(ext, "application/octet-stream")
 
